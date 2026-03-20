@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { feature } from 'topojson-client';
 
 const GLOBE_RADIUS = 1;
-const ATMOSPHERE_RADIUS = 1.14;
+const ATMOSPHERE_RADIUS = 1.08;
 const GLOBE_BG = '#0a0a0f';
 const OCEAN_COLOR = 0x0e0e28;
 const LAND_COLOR = 0x1a1a4a;
