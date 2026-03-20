@@ -195,7 +195,7 @@ export default function GlobeScene({ onCountryClick, isPanelOpen }: GlobeProps) 
     // Country markers (small glowing dots)
     const markers: THREE.Mesh[] = [];
     const markerNames: string[] = [];
-    const markerGeo = new THREE.SphereGeometry(0.025, 16, 16);
+    const markerGeo = new THREE.SphereGeometry(0.035, 16, 16);
 
     COUNTRY_MARKERS.forEach(({ name, lat, lng }) => {
       const pos = latLngToVec3(lat, lng, GLOBE_RADIUS + 0.01);
