@@ -4,12 +4,12 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { getCountryData } from '@/data/countryData';
 
 const GLOBE_RADIUS = 1;
-const ATMOSPHERE_RADIUS = 1.12;
+const ATMOSPHERE_RADIUS = 1.14;
 const GLOBE_BG = '#0a0a0f';
-const COUNTRY_COLOR = 0x1a1a3e;
-const COUNTRY_HOVER_COLOR = 0x32327a;
-const OCEAN_COLOR = 0x0d0d22;
-const ATMOSPHERE_COLOR = 0x3c3c8c;
+const COUNTRY_COLOR = 0x6a6aff;
+const COUNTRY_HOVER_COLOR = 0xa0a0ff;
+const OCEAN_COLOR = 0x12123a;
+const GRID_COLOR = 0x3a3a8e;
 
 // Hardcoded country positions (lat/lng → 3D) for clickable regions
 const COUNTRY_MARKERS: { name: string; lat: number; lng: number }[] = [
