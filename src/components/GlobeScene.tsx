@@ -315,9 +315,6 @@ export default function GlobeScene({ onCountryClick, isPanelOpen }: GlobeProps) 
           const hoverColor = getCountryHoverColor(name);
 
           const geom = feat.geometry;
-          const rings: number[][][] = [];
-          if (geom.type === 'Polygon') rings.push(...geom.coordinates);
-          else if (geom.type === 'MultiPolygon') geom.coordinates.forEach((p: number[][][]) => rings.push(...p));
 
           const countryData: CountryMeshData = { name, meshes: [], lines: [], baseColor, hoverColor };
 
