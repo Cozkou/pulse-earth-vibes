@@ -9,6 +9,35 @@ const OCEAN_COLOR = 0x060612;
 const BORDER_COLOR = 0x5858bb;
 const DEFAULT_LAND_COLOR = 0x1e1e55;
 
+// ISO 3166-1 numeric ID to alpha-2 code for flag URLs
+const ID_TO_CODE: Record<string, string> = {
+  '004': 'af', '008': 'al', '012': 'dz', '024': 'ao', '032': 'ar', '036': 'au',
+  '040': 'at', '050': 'bd', '056': 'be', '068': 'bo', '076': 'br', '100': 'bg',
+  '104': 'mm', '116': 'kh', '120': 'cm', '124': 'ca', '140': 'cf', '148': 'td',
+  '152': 'cl', '156': 'cn', '170': 'co', '178': 'cg', '180': 'cd', '188': 'cr',
+  '191': 'hr', '192': 'cu', '196': 'cy', '203': 'cz', '208': 'dk', '214': 'do',
+  '218': 'ec', '818': 'eg', '222': 'sv', '226': 'gq', '231': 'et', '232': 'er',
+  '233': 'ee', '246': 'fi', '250': 'fr', '266': 'ga', '270': 'gm', '268': 'ge',
+  '276': 'de', '288': 'gh', '300': 'gr', '320': 'gt', '324': 'gn', '328': 'gy',
+  '332': 'ht', '340': 'hn', '348': 'hu', '352': 'is', '356': 'in', '360': 'id',
+  '364': 'ir', '368': 'iq', '372': 'ie', '376': 'il', '380': 'it', '384': 'ci',
+  '388': 'jm', '392': 'jp', '400': 'jo', '398': 'kz', '404': 'ke', '408': 'kp',
+  '410': 'kr', '414': 'kw', '417': 'kg', '418': 'la', '422': 'lb', '426': 'ls',
+  '428': 'lv', '430': 'lr', '434': 'ly', '440': 'lt', '442': 'lu', '450': 'mg',
+  '454': 'mw', '458': 'my', '466': 'ml', '478': 'mr', '484': 'mx', '496': 'mn',
+  '498': 'md', '504': 'ma', '508': 'mz', '512': 'om', '516': 'na', '524': 'np',
+  '528': 'nl', '554': 'nz', '558': 'ni', '562': 'ne', '566': 'ng', '578': 'no',
+  '586': 'pk', '591': 'pa', '598': 'pg', '600': 'py', '604': 'pe', '608': 'ph',
+  '616': 'pl', '620': 'pt', '630': 'pr', '634': 'qa', '642': 'ro', '643': 'ru',
+  '646': 'rw', '682': 'sa', '686': 'sn', '688': 'rs', '694': 'sl', '702': 'sg',
+  '703': 'sk', '704': 'vn', '705': 'si', '706': 'so', '710': 'za', '716': 'zw',
+  '724': 'es', '728': 'ss', '729': 'sd', '736': 'sd', '740': 'sr', '748': 'sz',
+  '752': 'se', '756': 'ch', '760': 'sy', '762': 'tj', '764': 'th', '768': 'tg',
+  '780': 'tt', '788': 'tn', '792': 'tr', '795': 'tm', '800': 'ug', '804': 'ua',
+  '784': 'ae', '826': 'gb', '840': 'us', '858': 'uy', '860': 'uz', '862': 've',
+  '887': 'ye', '894': 'zm',
+};
+
 // ID-to-name mapping for world-atlas numeric IDs (ISO 3166-1 numeric)
 const ID_TO_NAME: Record<string, string> = {
   '004': 'Afghanistan', '008': 'Albania', '012': 'Algeria', '024': 'Angola',
@@ -243,10 +272,26 @@ export default function GlobeScene({ onCountryClick, isPanelOpen }: GlobeProps) 
     };
     sceneRef.current = state;
 
-    // Load countries — use 110m for perf, still looks good
+    const textureLoader = new THREE.TextureLoader();
+    textureLoader.crossOrigin = 'anonymous';
+    const textureCache = new Map<string, THREE.Texture | null>();
+
+    function loadFlagTexture(code: string): Promise<THREE.Texture | null> {
+      if (textureCache.has(code)) return Promise.resolve(textureCache.get(code)!);
+      return new Promise(resolve => {
+        textureLoader.load(
+          `https://flagcdn.com/w320/${code}.png`,
+          tex => { tex.minFilter = THREE.LinearFilter; textureCache.set(code, tex); resolve(tex); },
+          undefined,
+          () => { textureCache.set(code, null); resolve(null); },
+        );
+      });
+    }
+
+    // Load countries
     fetch('https://unpkg.com/world-atlas@2/countries-110m.json')
       .then(r => r.json())
-      .then(topoData => {
+      .then(async topoData => {
         const countries = feature(topoData, topoData.objects.countries) as any;
 
         const borderMat = new THREE.LineBasicMaterial({
@@ -255,9 +300,16 @@ export default function GlobeScene({ onCountryClick, isPanelOpen }: GlobeProps) 
           opacity: 0.6,
         });
 
-        countries.features.forEach((feat: any) => {
+        // Batch flag loading
+        const featureList = countries.features as any[];
+        const codes = featureList.map((f: any) => ID_TO_CODE[f.id?.toString()] || null);
+        const uniqueCodes = [...new Set(codes.filter(Boolean))] as string[];
+        await Promise.all(uniqueCodes.map(c => loadFlagTexture(c)));
+
+        featureList.forEach((feat: any, idx: number) => {
           const id = feat.id?.toString();
           const name = feat.properties?.name || ID_TO_NAME[id] || `Country ${id}`;
+          const code = codes[idx];
           const baseColor = getCountryColor(name);
           const hoverColor = getCountryHoverColor(name);
 
@@ -268,38 +320,57 @@ export default function GlobeScene({ onCountryClick, isPanelOpen }: GlobeProps) 
 
           const countryData: CountryMeshData = { name, meshes: [], lines: [], baseColor, hoverColor };
 
-          // Batch all rings into one geometry per country
           const allVerts: number[] = [];
+          const allLngLat: [number, number][] = [];
+
           rings.forEach(ring => {
             const pts = coordsToPoints(ring, GLOBE_RADIUS + 0.002);
             if (pts.length < 3) return;
 
-            // Border line
             const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
             const line = new THREE.Line(lineGeo, borderMat);
             countryGroup.add(line);
             countryData.lines.push(line);
 
-            // Fan triangulation into single buffer
             for (let i = 1; i < pts.length - 1; i++) {
-              allVerts.push(
-                pts[0].x, pts[0].y, pts[0].z,
-                pts[i].x, pts[i].y, pts[i].z,
-                pts[i + 1].x, pts[i + 1].y, pts[i + 1].z,
-              );
+              allVerts.push(pts[0].x, pts[0].y, pts[0].z);
+              allLngLat.push([ring[0][0], ring[0][1]]);
+              allVerts.push(pts[i].x, pts[i].y, pts[i].z);
+              allLngLat.push([ring[i][0], ring[i][1]]);
+              const ni = i + 1 < ring.length ? i + 1 : i;
+              allVerts.push(pts[ni].x, pts[ni].y, pts[ni].z);
+              allLngLat.push([ring[ni][0], ring[ni][1]]);
             }
           });
 
           if (allVerts.length > 0) {
+            // Compute UV bounding box
+            let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
+            for (const [lng, lat] of allLngLat) {
+              if (lng < minLng) minLng = lng;
+              if (lng > maxLng) maxLng = lng;
+              if (lat < minLat) minLat = lat;
+              if (lat > maxLat) maxLat = lat;
+            }
+            const lngRange = maxLng - minLng || 1;
+            const latRange = maxLat - minLat || 1;
+
+            const uvs = new Float32Array(allLngLat.length * 2);
+            for (let i = 0; i < allLngLat.length; i++) {
+              uvs[i * 2] = (allLngLat[i][0] - minLng) / lngRange;
+              uvs[i * 2 + 1] = (allLngLat[i][1] - minLat) / latRange;
+            }
+
             const geo = new THREE.BufferGeometry();
             geo.setAttribute('position', new THREE.Float32BufferAttribute(allVerts, 3));
+            geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
             geo.computeVertexNormals();
-            const mat = new THREE.MeshBasicMaterial({
-              color: baseColor,
-              transparent: true,
-              opacity: 0.7,
-              side: THREE.DoubleSide,
-            });
+
+            const flagTex = code ? textureCache.get(code) : null;
+            const mat = flagTex
+              ? new THREE.MeshBasicMaterial({ map: flagTex, transparent: true, opacity: 0.85, side: THREE.DoubleSide })
+              : new THREE.MeshBasicMaterial({ color: baseColor, transparent: true, opacity: 0.7, side: THREE.DoubleSide });
+
             const mesh = new THREE.Mesh(geo, mat);
             countryGroup.add(mesh);
             countryData.meshes.push(mesh);
