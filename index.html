@@ -21,6 +21,12 @@
 
   <body>
     <div id="root"></div>
+    <script>
+      window.ytReady = new Promise(function(r) { window.onYouTubeIframeAPIReady = r; });
+      var tag = document.createElement('script');
+      tag.src = 'https://www.youtube.com/iframe_api';
+      document.head.appendChild(tag);
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -113,9 +113,44 @@ export interface GlobeHandle {
 interface GlobeProps {
   onCountryClick: (name: string) => void;
   isPanelOpen: boolean;
+  crystalBallMode?: boolean;
 }
 
-const GlobeScene = forwardRef<GlobeHandle, GlobeProps>(({ onCountryClick, isPanelOpen }, ref) => {
+const CAM_DEFAULT = new THREE.Vector3(0, 0, 3.2);
+const CAM_CRYSTAL = new THREE.Vector3(0, 0.5, 3.2);
+
+function createStand(): THREE.Group {
+  const group = new THREE.Group();
+  const standMat = new THREE.MeshPhongMaterial({
+    color: 0x1a1a2e,
+    emissive: 0x0a0a14,
+    shininess: 40,
+    specular: 0x334466,
+  });
+  const base = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.85, 0.95, 0.12, 32),
+    standMat
+  );
+  base.position.y = -1.35;
+  group.add(base);
+  const stem = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.12, 0.18, 0.85, 24),
+    standMat
+  );
+  stem.position.y = -0.92;
+  group.add(stem);
+  const cup = new THREE.Mesh(
+    new THREE.TorusGeometry(0.95, 0.07, 16, 48),
+    standMat
+  );
+  cup.rotation.x = Math.PI / 2;
+  cup.position.y = -0.32;
+  group.add(cup);
+  group.scale.setScalar(0);
+  return group;
+}
+
+const GlobeScene = forwardRef<GlobeHandle, GlobeProps>(({ onCountryClick, isPanelOpen, crystalBallMode = false }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<{
     renderer: THREE.WebGLRenderer;
@@ -123,6 +158,7 @@ const GlobeScene = forwardRef<GlobeHandle, GlobeProps>(({ onCountryClick, isPane
     camera: THREE.PerspectiveCamera;
     controls: OrbitControls;
     globe: THREE.Mesh;
+    stand: THREE.Group;
     countryMeshes: THREE.Mesh[];
     countryDataMap: Map<THREE.Mesh, CountryMeshData>;
     raycaster: THREE.Raycaster;
@@ -132,6 +168,8 @@ const GlobeScene = forwardRef<GlobeHandle, GlobeProps>(({ onCountryClick, isPane
     countryNames: string[];
     flyTarget: THREE.Vector3 | null;
     flyProgress: number;
+    crystalProgress: number;
+    crystalTarget: number;
   } | null>(null);
   const [hoveredName, setHoveredName] = useState<string | null>(null);
   const mouseScreenRef = useRef({ x: 0, y: 0 });
@@ -251,6 +289,9 @@ const GlobeScene = forwardRef<GlobeHandle, GlobeProps>(({ onCountryClick, isPane
     tinyGeo.setAttribute('position', new THREE.BufferAttribute(tinyPos, 3));
     scene.add(new THREE.Points(tinyGeo, new THREE.PointsMaterial({ color: 0x5566aa, size: 0.03, sizeAttenuation: true, transparent: true, opacity: 0.5 })));
 
+    const stand = createStand();
+    scene.add(stand);
+
     const countryGroup = new THREE.Group();
     scene.add(countryGroup);
 
@@ -261,13 +302,15 @@ const GlobeScene = forwardRef<GlobeHandle, GlobeProps>(({ onCountryClick, isPane
     const mouse = new THREE.Vector2();
 
     const state = {
-      renderer, scene, camera, controls, globe, countryMeshes, countryDataMap,
+      renderer, scene, camera, controls, globe, stand, countryMeshes, countryDataMap,
       raycaster, mouse,
       hoveredCountry: null as CountryMeshData | null,
       frameId: 0,
       countryNames: [] as string[],
       flyTarget: null as THREE.Vector3 | null,
       flyProgress: 0,
+      crystalProgress: 0,
+      crystalTarget: 0,
     };
     sceneRef.current = state;
 
@@ -411,6 +454,12 @@ const GlobeScene = forwardRef<GlobeHandle, GlobeProps>(({ onCountryClick, isPane
       controls.update();
       frameCount++;
 
+      // Crystal ball transition
+      state.crystalProgress += (state.crystalTarget - state.crystalProgress) * 0.04;
+      const c = state.crystalProgress;
+      const cease = c * c * (3 - 2 * c);
+      state.stand.scale.setScalar(cease);
+
       // Fly-to animation
       if (state.flyTarget) {
         state.flyProgress += 0.02;
@@ -425,6 +474,9 @@ const GlobeScene = forwardRef<GlobeHandle, GlobeProps>(({ onCountryClick, isPane
           state.flyTarget = null;
           state.flyProgress = 0;
         }
+      } else {
+        camera.position.lerpVectors(CAM_DEFAULT, CAM_CRYSTAL, cease);
+        camera.lookAt(0, 0, 0);
       }
 
       // Raycast hover every 3 frames
@@ -486,6 +538,11 @@ const GlobeScene = forwardRef<GlobeHandle, GlobeProps>(({ onCountryClick, isPane
     const s = sceneRef.current;
     if (s) s.controls.autoRotate = !isPanelOpen;
   }, [isPanelOpen]);
+
+  useEffect(() => {
+    const s = sceneRef.current;
+    if (s) s.crystalTarget = crystalBallMode ? 1 : 0;
+  }, [crystalBallMode]);
 
   useEffect(() => {
     const container = containerRef.current;

@@ -1,8 +1,9 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 const axios = require('axios');
-const { getTopTracksForCountry, createPlaylist, COUNTRY_GENRES } = require('./spotify');
-const { parseUserIntent, generatePlaylistDetails } = require('./agent');
+const { getTopTracksForCountry, createPlaylist, getTracksByMood, COUNTRY_GENRES } = require('./spotify');
+const { parseUserIntent, generatePlaylistDetails, generateReply, analyzeVibe, generateYouTubeSearchQuery, generateCrystalSessionPlaylistDetails } = require('./agent');
 
 const app = express();
 app.use(express.json());
@@ -77,6 +78,170 @@ app.get('/api/country/:code', async (req, res) => {
   res.json(data);
 });
 
+app.post('/api/vibe-analyze', async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text || typeof text !== 'string') return res.status(400).json({ error: 'text required' });
+    const vibe = await analyzeVibe(text);
+    res.json(vibe);
+  } catch (err) {
+    console.error('Vibe analyze error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+function isLyricVideo(item) {
+  const title = (item.snippet?.title || '').toLowerCase();
+  const desc = (item.snippet?.description || '').toLowerCase();
+  const combined = `${title} ${desc}`;
+  return /\blyric\b|lyrics\s*video/i.test(combined);
+}
+
+function isKeyError(err) {
+  const status = err.response?.status;
+  const code = err.response?.data?.error?.code;
+  return status === 403 || status === 401 || code === 403 || code === 401;
+}
+
+async function youtubeSearch(query, key) {
+  const { data } = await axios.get('https://www.googleapis.com/youtube/v3/search', {
+    params: { part: 'snippet', q: query, type: 'video', maxResults: 15, key },
+  });
+  return data;
+}
+
+async function youtubeSearchWithFallback(query) {
+  const keys = [process.env.YOUTUBE_API_KEY, process.env.YOUTUBE_API_KEY_2].filter(Boolean);
+  if (keys.length === 0) return null;
+  let lastErr;
+  for (const key of keys) {
+    try {
+      return await youtubeSearch(query, key);
+    } catch (err) {
+      lastErr = err;
+      if (isKeyError(err) && keys.indexOf(key) < keys.length - 1) continue;
+      throw err;
+    }
+  }
+  throw lastErr;
+}
+
+app.post('/api/youtube-by-happiness', async (req, res) => {
+  try {
+    const keys = [process.env.YOUTUBE_API_KEY, process.env.YOUTUBE_API_KEY_2].filter(Boolean);
+    if (keys.length === 0) return res.status(503).json({ error: 'YOUTUBE_API_KEY not set' });
+
+    const h = Math.max(0, Math.min(1, parseFloat(req.body.happiness) || 0.5));
+    const queries = h > 0.6 ? ['upbeat happy music lyrics', 'feel good pop lyrics', 'joyful songs lyric video'] : h < 0.4 ? ['sad mellow music lyrics', 'calm acoustic lyrics', 'emotional ballads lyric video'] : ['chill music lyrics', 'relaxing pop lyrics', 'neutral vibes lyric video'];
+    const query = queries[Math.floor(Math.random() * queries.length)];
+
+    const data = await youtubeSearchWithFallback(query);
+
+    const items = (data.items || []).filter((v) => v.id?.videoId && isLyricVideo(v));
+    const videos = (items.length > 0 ? items : data.items || []).slice(0, 5).map((v) => ({
+      videoId: v.id.videoId,
+      title: v.snippet?.title || 'Music',
+      channelTitle: v.snippet?.channelTitle || '',
+    }));
+    if (videos.length === 0) {
+      return res.status(404).json({ error: 'No video found' });
+    }
+    res.json({ videos });
+  } catch (err) {
+    console.error('YouTube by happiness error:', err.message, err.response?.data);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/youtube-by-vibe', async (req, res) => {
+  try {
+    const keys = [process.env.YOUTUBE_API_KEY, process.env.YOUTUBE_API_KEY_2].filter(Boolean);
+    if (keys.length === 0) return res.status(503).json({ error: 'YOUTUBE_API_KEY not set' });
+
+    const vibe = await analyzeVibe(req.body.text || 'chill music');
+    const query = await generateYouTubeSearchQuery(req.body.text || 'chill music', vibe);
+
+    const data = await youtubeSearchWithFallback(`${query} music lyrics`);
+
+    const items = (data.items || []).filter((v) => v.id?.videoId && isLyricVideo(v));
+    const video = items[0] || data.items?.find((v) => v.id?.videoId);
+    if (!video?.id?.videoId) {
+      return res.status(404).json({ error: 'No video found' });
+    }
+
+    res.json({
+      videoId: video.id.videoId,
+      title: video.snippet?.title || 'Music',
+      channelTitle: video.snippet?.channelTitle || '',
+    });
+  } catch (err) {
+    console.error('YouTube by vibe error:', err.message, err.response?.data);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/tracks-by-mood', async (req, res) => {
+  try {
+    const { energy = 0.5, valence = 0.5, danceability = 0.5 } = req.body;
+    const tracks = await getTracksByMood(
+      parseFloat(energy) || 0.5,
+      parseFloat(valence) || 0.5,
+      parseFloat(danceability) || 0.5
+    );
+    if (tracks.length === 0) {
+      console.warn('tracks-by-mood: no tracks with preview_url found');
+    }
+    res.json({ tracks });
+  } catch (err) {
+    console.error('Tracks by mood error:', err.message, err.response?.data);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/debug-previews', async (req, res) => {
+  try {
+    const us = await getTopTracksForCountry('US');
+    const sample = us.slice(0, 5).map((t) => ({
+      name: t.name,
+      artist: t.artist,
+      hasPreview: !!t.preview_url,
+    }));
+    res.json({ usSample: sample, total: us.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/create-session-playlist', async (req, res) => {
+  try {
+    const { trackIds = [], tracks = [], name } = req.body;
+    const ids = Array.isArray(trackIds) ? trackIds : [];
+    const trackList = Array.isArray(tracks) ? tracks : [];
+    const allIds = ids.length > 0 ? ids : trackList.map((t) => t.id).filter(Boolean);
+    if (allIds.length === 0) {
+      return res.status(400).json({ error: 'trackIds or tracks array required' });
+    }
+    let playlistName = name;
+    let playlistDesc = 'Songs from your Crystal Ball session — generated by Pulse Earth Vibes';
+    if (trackList.length > 0) {
+      try {
+        const details = await generateCrystalSessionPlaylistDetails(trackList);
+        playlistName = details.name;
+        playlistDesc = details.description;
+      } catch (e) {
+        console.warn('Crystal playlist details fallback:', e.message);
+      }
+    }
+    const trackUris = allIds.map((id) => `spotify:track:${id}`);
+    const url = await createPlaylist(playlistName || 'My Crystal Ball Session', playlistDesc, trackUris);
+    res.json({ url, name: playlistName });
+  } catch (err) {
+    const detail = err.response?.data || err.message;
+    console.error('Session playlist error:', detail);
+    res.status(500).json({ error: typeof detail === 'string' ? detail : JSON.stringify(detail) });
+  }
+});
+
 app.post('/api/create-playlist', async (req, res) => {
   try {
     const { countryCode } = req.body;
@@ -139,77 +304,146 @@ async function processMusicBotMessage(messageText, fallbackCountryCode = null) {
     };
   }
 
-  return {
-    text: `Try asking me:\n• "Make me a playlist from Brazil"\n• "What's trending in Japan?"\n• "What's the vibe in Nigeria?"`,
-  };
+  // Fallback: reply based on whatever the user asked (conversational)
+  let countryData = null;
+  if (code) {
+    if (!globeData[code]) await refreshCountryData(code);
+    countryData = globeData[code];
+  }
+  const reply = await generateReply(messageText, { countryData, countryCode: code });
+  return { text: reply };
 }
 
-function extractLuffaWebhookPayload(body) {
-  if (!body || typeof body !== 'object') return { text: '', recipientId: null };
-  const text =
-    body.message ??
-    body.text ??
-    body.content ??
-    (body.msg && (body.msg.text ?? body.msg.content)) ??
-    '';
-  const recipientId =
-    body.userId ??
-    body.uid ??
-    body.user_id ??
-    body.groupId ??
-    body.group_id ??
-    body.recipientId ??
-    body.from ??
-    null;
-  return { text: String(text).trim(), recipientId };
+// Luffa uses polling, not webhooks. Poll receive API every second.
+const LUFFA_RECEIVE_URL = 'https://apibot.luffa.im/robot/receive';
+const LUFFA_SEND_URL = 'https://apibot.luffa.im/robot/send';
+const LUFFA_SEND_GROUP_URL = 'https://apibot.luffa.im/robot/sendGroup';
+const LUFFA_POLL_INTERVAL_MS = 1000;
+const LUFFA_MSGID_DEDUPE_MAX = 500;
+
+const seenMsgIds = new Set();
+const msgIdQueue = [];
+let luffaLastNetworkErrorLog = 0;
+
+function markMsgIdSeen(msgId) {
+  if (!msgId || seenMsgIds.has(msgId)) return true;
+  seenMsgIds.add(msgId);
+  msgIdQueue.push(msgId);
+  if (msgIdQueue.length > LUFFA_MSGID_DEDUPE_MAX) {
+    const old = msgIdQueue.shift();
+    seenMsgIds.delete(old);
+  }
+  return false;
 }
 
-// Luffa: point your bot webhook URL here (e.g. https://your-host/webhook/luffa)
-app.post('/webhook/luffa', async (req, res) => {
-  res.sendStatus(200);
+function stripMarkdown(text) {
+  if (typeof text !== 'string') return text;
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/\*(.+?)\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1')
+    .replace(/_(.+?)_/g, '$1')
+    .replace(/`(.+?)`/g, '$1')
+    .replace(/^#+\s*/gm, '')
+    .trim();
+}
 
-  const { text, recipientId } = extractLuffaWebhookPayload(req.body);
-  if (!text) {
-    console.warn('Luffa webhook: empty message', JSON.stringify(req.body).slice(0, 200));
-    return;
+async function sendLuffaMessage(uid, text, isGroup = false) {
+  const secret = process.env.LUFFA_BOT_SECRET;
+  if (!secret) return;
+  const url = isGroup ? LUFFA_SEND_GROUP_URL : LUFFA_SEND_URL;
+  const msgPayload = { text: stripMarkdown(text) };
+  const body = isGroup
+    ? { secret, uid, msg: JSON.stringify(msgPayload), type: '1' }
+    : { secret, uid, msg: JSON.stringify(msgPayload) };
+  try {
+    const res = await axios.post(url, body, { headers: { 'Content-Type': 'application/json' } });
+    if (res.status !== 200 || (res.data && res.data.code !== undefined && res.data.code !== 0)) {
+      console.log('Luffa send response:', res.status, JSON.stringify(res.data).slice(0, 200));
+    }
+  } catch (err) {
+    console.error('Luffa send error:', err.message, err.response?.data ? JSON.stringify(err.response.data) : '');
   }
-  if (!recipientId) {
-    console.warn('Luffa webhook: no recipient id in payload', JSON.stringify(req.body).slice(0, 200));
-    return;
-  }
-  if (!process.env.LUFFA_BOT_UID || !process.env.LUFFA_BOT_SECRET) {
-    console.error('Luffa webhook: set LUFFA_BOT_UID and LUFFA_BOT_SECRET to send replies');
-    return;
-  }
+}
+
+async function pollLuffa() {
+  const secret = process.env.LUFFA_BOT_SECRET;
+  if (!secret) return;
 
   try {
-    const { text: reply } = await processMusicBotMessage(text, null);
-    console.log('Luffa reply length:', reply.length);
-    await sendLuffaMessage(recipientId, reply);
+    const res = await axios.post(LUFFA_RECEIVE_URL, { secret }, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 5000,
+    });
+    let data = res.data;
+    if (!Array.isArray(data) && data && (data.data || data.message)) {
+      data = data.data || data.message;
+    }
+
+    if (!Array.isArray(data)) {
+      if (data && Object.keys(data).length > 0) {
+        console.log('Luffa receive (unexpected shape):', JSON.stringify(data).slice(0, 400));
+      }
+      return;
+    }
+
+    for (const envelope of data) {
+      const { uid, message: msgList, type } = envelope;
+      if (!uid || !Array.isArray(msgList)) continue;
+
+      const isGroup = String(type) === '1';
+
+      for (const raw of msgList) {
+        let parsed;
+        try {
+          parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        } catch {
+          continue;
+        }
+        const text = (parsed?.text || '').trim();
+        const msgId = parsed?.msgId;
+        if (!text) continue;
+        if (msgId && markMsgIdSeen(msgId)) continue;
+
+        console.log('Luffa: processing message from', uid, ':', text.slice(0, 50));
+        (async () => {
+          try {
+            const { text: reply } = await processMusicBotMessage(text, null);
+            await sendLuffaMessage(uid, reply, isGroup);
+            console.log('Luffa: replied to', uid);
+          } catch (err) {
+            console.error('Luffa process error:', err.message);
+            await sendLuffaMessage(uid, 'Something went wrong. Try again in a moment.', isGroup);
+          }
+        })();
+      }
+    }
   } catch (err) {
-    console.error('Luffa webhook error:', err.message);
-    try {
-      await sendLuffaMessage(recipientId, 'Something went wrong fetching Spotify data. Try again in a moment.');
-    } catch (_) {
-      /* ignore */
+    if (err.code === 'ECONNABORTED') return;
+    if (err.code === 'ENOTFOUND' || err.code === 'ECONNREFUSED') {
+      if (Date.now() - luffaLastNetworkErrorLog > 60000) {
+        console.warn('Luffa: cannot reach apibot.luffa.im (check network). Polling continues.');
+        luffaLastNetworkErrorLog = Date.now();
+      }
+    } else {
+      console.error('Luffa poll error:', err.message);
     }
   }
-});
+}
 
-async function sendLuffaMessage(recipientId, text) {
-  try {
-    await axios.post('https://api.luffa.im/bot/send', {
-      botUid: process.env.LUFFA_BOT_UID,
-      secretKey: process.env.LUFFA_BOT_SECRET,
-      recipientId,
-      message: text,
-    });
-  } catch (err) {
-    console.error('Luffa send error:', err.message);
+function startLuffaPoller() {
+  const secret = process.env.LUFFA_BOT_SECRET;
+  if (!secret) {
+    console.log('Luffa: LUFFA_BOT_SECRET not set, bot polling disabled');
+    return;
   }
+  console.log('Luffa: polling started (receive every 1s)');
+  setInterval(pollLuffa, LUFFA_POLL_INTERVAL_MS);
+  pollLuffa();
 }
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  startLuffaPoller();
 });

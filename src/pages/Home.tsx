@@ -10,7 +10,7 @@ const Home = () => {
         <p className="retro-body mt-8 max-w-3xl text-muted-foreground">
           A live world map of what people are listening to. Jump country to country, hear previews, and generate playlists from local trends.
         </p>
-        <div className="mt-10 flex items-center gap-3">
+        <div className="mt-10">
           <button
             onClick={() => navigate('/globe')}
             className="retro-title retro-panel rounded-sm px-8 py-4 text-xs text-foreground transition-transform hover:-translate-y-0.5"
@@ -18,7 +18,7 @@ const Home = () => {
               background: 'linear-gradient(90deg, rgba(0,255,245,0.15), rgba(255,0,153,0.15))',
             }}
           >
-            Start Exploring
+            Begin
           </button>
         </div>
 

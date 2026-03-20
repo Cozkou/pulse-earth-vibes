@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useMemo } from 'react';
-import { Search, X } from 'lucide-react';
+import { Search, X, Sparkles } from 'lucide-react';
 import TopBar from '@/components/TopBar';
 import CountryPanel from '@/components/CountryPanel';
 import GlobeScene, { type GlobeHandle } from '@/components/GlobeScene';
@@ -31,6 +31,7 @@ const Index = () => {
   const [isClosing, setIsClosing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [crystalBallMode, setCrystalBallMode] = useState(false);
   const globeRef = useRef<GlobeHandle>(null);
 
   const filtered = useMemo(() => {
@@ -74,7 +75,7 @@ const Index = () => {
   return (
     <div className="relative w-screen h-screen overflow-hidden" style={{ background: GLOBE_BG }}>
       <TopBar />
-      <GlobeScene ref={globeRef} onCountryClick={handleCountryClick} isPanelOpen={!!selectedCountry} />
+      <GlobeScene ref={globeRef} onCountryClick={handleCountryClick} isPanelOpen={!!selectedCountry} crystalBallMode={crystalBallMode} />
 
       {/* Minimal search in top-right */}
       <div className="absolute top-16 right-4 z-40 w-[min(88vw,320px)]">
@@ -142,6 +143,17 @@ const Index = () => {
           </>
         )}
       </div>
+
+      <button
+        onClick={() => setCrystalBallMode((v) => !v)}
+        aria-label={crystalBallMode ? 'Show globe' : 'Crystal ball view'}
+        className="retro-panel absolute bottom-6 left-6 z-40 flex items-center gap-2 px-4 py-2.5 bg-[rgba(9,12,28,0.82)] hover:bg-[rgba(12,16,34,0.95)] transition-colors"
+      >
+        <Sparkles className="w-4 h-4 text-blue-300/80" />
+        <span className="retro-title text-xs text-blue-200/90">
+          {crystalBallMode ? 'Globe' : 'Crystal Ball'}
+        </span>
+      </button>
 
       {selectedCountry && (
         <CountryPanel countryName={selectedCountry} onClose={handleClose} isClosing={isClosing} />

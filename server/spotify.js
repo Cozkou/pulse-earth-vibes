@@ -61,6 +61,20 @@ const GENRE_TO_SEARCH_TAG = {
 
 const MARKET_FALLBACK = 'US';
 
+const COMPILATION_BAD = /mixtape|compilation|various artists|karaoke/i;
+
+function isProperTrack(item) {
+  if (!item?.id) return false;
+  const albumType = item.album?.album_type;
+  if (albumType === 'compilation') return false;
+  const artist = item.artists?.[0]?.name ?? '';
+  if (/^Various Artists$/i.test(artist)) return false;
+  const trackName = item.name ?? '';
+  const albumName = item.album?.name ?? '';
+  if (COMPILATION_BAD.test(trackName) || COMPILATION_BAD.test(albumName)) return false;
+  return true;
+}
+
 function mapTrack(item) {
   if (!item?.id) return null;
   return {
@@ -138,19 +152,24 @@ function buildSearchQueries(countryCode) {
   return pop;
 }
 
-async function searchTracks(token, q, market, limit) {
+async function searchTracks(token, q, market, limit, filterCompilations = false) {
+  const requestLimit = filterCompilations ? Math.min(limit * 3, 50) : limit;
   const url =
     `https://api.spotify.com/v1/search?` +
     new URLSearchParams({
       q,
       type: 'track',
       market,
-      limit: String(limit),
+      limit: String(requestLimit),
     });
   const { data } = await axios.get(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return (data.tracks?.items || []).map(mapTrack).filter(Boolean);
+  let items = data.tracks?.items || [];
+  if (filterCompilations) {
+    items = items.filter(isProperTrack);
+  }
+  return items.slice(0, limit).map(mapTrack).filter(Boolean);
 }
 
 /**
@@ -164,7 +183,7 @@ async function getTopTracksForCountry(countryCode) {
   const perQuery = 4;
 
   const batches = await Promise.all(
-    queries.map((q) => searchTracks(token, q, market, perQuery).catch(() => [])),
+    queries.map((q) => searchTracks(token, q, market, perQuery, true).catch(() => [])),
   );
 
   let flat = batches.flat();
@@ -178,7 +197,7 @@ async function getTopTracksForCountry(countryCode) {
   // Last resort: single broad genre search in market
   try {
     const tag = primaryGenreTag(countryCode);
-    const extra = await searchTracks(token, `genre:${tag}`, market, 10);
+    const extra = await searchTracks(token, `genre:${tag}`, market, 10, true);
     const merged = dedupeById([...flat.map((t) => ({ ...t, popularity: t.popularity ?? 0 })), ...extra]);
     merged.sort((a, b) => b.popularity - a.popularity);
     return merged.slice(0, 10).map(({ popularity: _p, ...rest }) => rest);
@@ -208,4 +227,61 @@ async function createPlaylist(name, description, trackUris) {
   return playlistResponse.data.external_urls.spotify;
 }
 
-module.exports = { getTopTracksForCountry, createPlaylist, COUNTRY_GENRES };
+function buildMoodSearchQueries(energy, valence) {
+  const v = valence;
+  const e = energy;
+  const y = new Date().getFullYear();
+  if (v > 0.65 && e > 0.6) {
+    return [`upbeat pop year:${y}`, `feel good hits year:${y}`, `happy pop year:${y - 1}`];
+  }
+  if (v < 0.4 && e < 0.5) {
+    return [`sad acoustic year:${y}`, `mellow ballads year:${y}`, `emotional songs year:${y - 1}`];
+  }
+  return [`chill pop year:${y}`, `relaxing music year:${y}`, `indie pop year:${y - 1}`];
+}
+
+async function getTracksByMood(energy, valence, danceability) {
+  const e = Math.max(0.1, Math.min(1, energy));
+  const v = Math.max(0.1, Math.min(1, valence));
+
+  const token = await getAccessToken();
+  const queries = buildMoodSearchQueries(e, v);
+  const markets = ['US', 'GB', 'CA', 'AU'];
+
+  for (const market of markets) {
+    const batches = await Promise.all(
+      queries.map((q) => searchTracks(token, q, market, 10, true).catch(() => []))
+    );
+    let flat = batches.flat();
+    flat = dedupeById(flat);
+    flat = flat.filter((t) => t.preview_url);
+    flat.sort((a, b) => b.popularity - a.popularity);
+    if (flat.length > 0) return flat.slice(0, 10);
+  }
+
+  for (const market of markets) {
+    const batches = await Promise.all(
+      queries.map((q) => searchTracks(token, q, market, 15, false).catch(() => []))
+    );
+    let flat = batches.flat();
+    flat = dedupeById(flat);
+    flat = flat.filter((t) => t.preview_url);
+    flat.sort((a, b) => b.popularity - a.popularity);
+    if (flat.length > 0) return flat.slice(0, 10);
+  }
+
+  const moodCountries = [
+    { e: 0.8, v: 0.7, code: 'US' },
+    { e: 0.6, v: 0.8, code: 'BR' },
+    { e: 0.7, v: 0.7, code: 'GB' },
+    { e: 0.7, v: 0.6, code: 'CA' },
+  ];
+  for (const { code } of moodCountries) {
+    const fallback = await getTopTracksForCountry(code);
+    const withPreview = fallback.filter((t) => t.preview_url);
+    if (withPreview.length > 0) return withPreview.slice(0, 10);
+  }
+  return [];
+}
+
+module.exports = { getTopTracksForCountry, createPlaylist, getTracksByMood, COUNTRY_GENRES };
