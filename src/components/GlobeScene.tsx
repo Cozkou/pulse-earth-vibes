@@ -232,7 +232,7 @@ export default function GlobeScene({ onCountryClick, isPanelOpen }: GlobeProps) 
       starsPositions[i] = (Math.random() - 0.5) * 80;
     }
     starsGeo.setAttribute('position', new THREE.BufferAttribute(starsPositions, 3));
-    const starsMat = new THREE.PointsMaterial({ color: 0x555588, size: 0.08, sizeAttenuation: true });
+    const starsMat = new THREE.PointsMaterial({ color: 0x8888bb, size: 0.1, sizeAttenuation: true });
     const stars = new THREE.Points(starsGeo, starsMat);
     scene.add(stars);
 
