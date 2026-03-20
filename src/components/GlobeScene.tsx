@@ -186,8 +186,8 @@ export default function GlobeScene({ onCountryClick, isPanelOpen }: GlobeProps) 
       fragmentShader: `
         varying vec3 vNormal;
         void main() {
-          float intensity = pow(0.72 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 2.5);
-          gl_FragColor = vec4(0.3, 0.3, 0.65, 1.0) * intensity;
+          float intensity = pow(0.55 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 3.0);
+          gl_FragColor = vec4(0.22, 0.22, 0.5, 1.0) * intensity;
         }
       `,
       blending: THREE.AdditiveBlending,
