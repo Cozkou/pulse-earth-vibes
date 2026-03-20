@@ -4,12 +4,12 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { getCountryData } from '@/data/countryData';
 
 const GLOBE_RADIUS = 1;
-const ATMOSPHERE_RADIUS = 1.12;
+const ATMOSPHERE_RADIUS = 1.14;
 const GLOBE_BG = '#0a0a0f';
-const COUNTRY_COLOR = 0x1a1a3e;
-const COUNTRY_HOVER_COLOR = 0x32327a;
-const OCEAN_COLOR = 0x0d0d22;
-const ATMOSPHERE_COLOR = 0x3c3c8c;
+const COUNTRY_COLOR = 0x6a6aff;
+const COUNTRY_HOVER_COLOR = 0xa0a0ff;
+const OCEAN_COLOR = 0x12123a;
+const GRID_COLOR = 0x3a3a8e;
 
 // Hardcoded country positions (lat/lng → 3D) for clickable regions
 const COUNTRY_MARKERS: { name: string; lat: number; lng: number }[] = [
@@ -125,12 +125,12 @@ export default function GlobeScene({ onCountryClick, isPanelOpen }: GlobeProps) 
     controls.autoRotateSpeed = 0.5;
 
     // Lights
-    const ambient = new THREE.AmbientLight(0x444466, 1.2);
+    const ambient = new THREE.AmbientLight(0x8888bb, 2.0);
     scene.add(ambient);
-    const directional = new THREE.DirectionalLight(0x8888cc, 0.8);
+    const directional = new THREE.DirectionalLight(0xaaaaee, 1.2);
     directional.position.set(5, 3, 5);
     scene.add(directional);
-    const backLight = new THREE.DirectionalLight(0x334466, 0.4);
+    const backLight = new THREE.DirectionalLight(0x6666aa, 0.6);
     backLight.position.set(-5, -2, -5);
     scene.add(backLight);
 
@@ -138,14 +138,15 @@ export default function GlobeScene({ onCountryClick, isPanelOpen }: GlobeProps) 
     const globeGeo = new THREE.SphereGeometry(GLOBE_RADIUS, 64, 64);
     const globeMat = new THREE.MeshPhongMaterial({
       color: OCEAN_COLOR,
-      shininess: 15,
-      specular: 0x222244,
+      emissive: 0x0a0a2a,
+      shininess: 25,
+      specular: 0x4444aa,
     });
     const globe = new THREE.Mesh(globeGeo, globeMat);
     scene.add(globe);
 
     // Grid lines (longitude/latitude)
-    const gridMat = new THREE.LineBasicMaterial({ color: 0x1a1a3e, transparent: true, opacity: 0.25 });
+    const gridMat = new THREE.LineBasicMaterial({ color: GRID_COLOR, transparent: true, opacity: 0.45 });
     for (let i = 0; i < 18; i++) {
       const curve = new THREE.EllipseCurve(0, 0, GLOBE_RADIUS + 0.002, GLOBE_RADIUS + 0.002, 0, Math.PI * 2, false, 0);
       const points2d = curve.getPoints(64);
@@ -180,8 +181,8 @@ export default function GlobeScene({ onCountryClick, isPanelOpen }: GlobeProps) 
       fragmentShader: `
         varying vec3 vNormal;
         void main() {
-          float intensity = pow(0.65 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 3.0);
-          gl_FragColor = vec4(0.24, 0.24, 0.55, 1.0) * intensity;
+          float intensity = pow(0.72 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 2.5);
+          gl_FragColor = vec4(0.35, 0.35, 0.7, 1.0) * intensity;
         }
       `,
       blending: THREE.AdditiveBlending,
@@ -194,7 +195,7 @@ export default function GlobeScene({ onCountryClick, isPanelOpen }: GlobeProps) 
     // Country markers (small glowing dots)
     const markers: THREE.Mesh[] = [];
     const markerNames: string[] = [];
-    const markerGeo = new THREE.SphereGeometry(0.025, 16, 16);
+    const markerGeo = new THREE.SphereGeometry(0.035, 16, 16);
 
     COUNTRY_MARKERS.forEach(({ name, lat, lng }) => {
       const pos = latLngToVec3(lat, lng, GLOBE_RADIUS + 0.01);
@@ -210,11 +211,11 @@ export default function GlobeScene({ onCountryClick, isPanelOpen }: GlobeProps) 
       markerNames.push(name);
 
       // Outer glow ring
-      const ringGeo = new THREE.RingGeometry(0.03, 0.045, 32);
+      const ringGeo = new THREE.RingGeometry(0.04, 0.06, 32);
       const ringMat = new THREE.MeshBasicMaterial({
         color: COUNTRY_COLOR,
         transparent: true,
-        opacity: 0.3,
+        opacity: 0.5,
         side: THREE.DoubleSide,
       });
       const ring = new THREE.Mesh(ringGeo, ringMat);
@@ -231,7 +232,7 @@ export default function GlobeScene({ onCountryClick, isPanelOpen }: GlobeProps) 
       starsPositions[i] = (Math.random() - 0.5) * 80;
     }
     starsGeo.setAttribute('position', new THREE.BufferAttribute(starsPositions, 3));
-    const starsMat = new THREE.PointsMaterial({ color: 0x555588, size: 0.08, sizeAttenuation: true });
+    const starsMat = new THREE.PointsMaterial({ color: 0x8888bb, size: 0.1, sizeAttenuation: true });
     const stars = new THREE.Points(starsGeo, starsMat);
     scene.add(stars);
 
