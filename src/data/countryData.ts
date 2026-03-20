@@ -50,6 +50,42 @@ export const COUNTRY_META: Record<string, CountryMeta> = {
   IT: { flag: '🇮🇹', vibe: 'Melodic', vibeColor: 'hsl(140, 60%, 45%)', displayName: 'Italy' },
 };
 
+const COUNTRY_NAME_ALIASES: Record<string, string> = {
+  'Dem. Rep. Congo': 'Democratic Republic of the Congo',
+  Congo: 'Republic of the Congo',
+  'Ivory Coast': "Cote d'Ivoire",
+  'Czech Republic': 'Czechia',
+  'South Korea': 'Korea, Republic of',
+  'North Korea': "Korea, Democratic People's Republic of",
+  Russia: 'Russian Federation',
+};
+
+export async function resolveCountryCode(name: string): Promise<string | null> {
+  const direct = COUNTRY_NAME_TO_CODE[name];
+  if (direct) return direct;
+
+  const query = COUNTRY_NAME_ALIASES[name] || name;
+  try {
+    const response = await fetch(
+      `https://restcountries.com/v3.1/name/${encodeURIComponent(query)}?fields=cca2,name`
+    );
+    if (!response.ok) return null;
+    const list = await response.json();
+    if (!Array.isArray(list) || list.length === 0) return null;
+
+    const exact = list.find((c: any) => {
+      const common = c?.name?.common?.toLowerCase?.() || '';
+      const official = c?.name?.official?.toLowerCase?.() || '';
+      const target = query.toLowerCase();
+      return common === target || official === target;
+    });
+
+    return (exact || list[0])?.cca2 || null;
+  } catch {
+    return null;
+  }
+}
+
 const dotColors = [
   'hsl(330, 80%, 60%)',
   'hsl(200, 80%, 55%)',

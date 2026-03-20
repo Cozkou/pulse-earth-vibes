@@ -1,7 +1,6 @@
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
-const cron = require('node-cron');
 const { getTopTracksForCountry, createPlaylist, COUNTRY_GENRES } = require('./spotify');
 const { parseUserIntent, generatePlaylistDetails } = require('./agent');
 
@@ -19,24 +18,7 @@ app.use((req, res, next) => {
 // In-memory data store
 let globeData = {};
 
-// Countries to track
-const COUNTRIES = [
-  { code: 'US', name: 'United States' },
-  { code: 'GB', name: 'United Kingdom' },
-  { code: 'BR', name: 'Brazil' },
-  { code: 'NG', name: 'Nigeria' },
-  { code: 'KR', name: 'South Korea' },
-  { code: 'JP', name: 'Japan' },
-  { code: 'DE', name: 'Germany' },
-  { code: 'FR', name: 'France' },
-  { code: 'MX', name: 'Mexico' },
-  { code: 'IN', name: 'India' },
-  { code: 'AR', name: 'Argentina' },
-  { code: 'ZA', name: 'South Africa' },
-  { code: 'AU', name: 'Australia' },
-  { code: 'ES', name: 'Spain' },
-  { code: 'IT', name: 'Italy' },
-];
+const regionNames = new Intl.DisplayNames(['en'], { type: 'region' });
 
 const GENRE_MOOD = {
   'hip-hop':    { energy: 0.80, danceability: 0.75, valence: 0.60 },
@@ -49,17 +31,19 @@ const GENRE_MOOD = {
   'bollywood':  { energy: 0.75, danceability: 0.82, valence: 0.76 },
 };
 
-async function refreshCountryData(country) {
+async function refreshCountryData(countryCode) {
   try {
-    const tracks = await getTopTracksForCountry(country.code);
+    const code = countryCode.toUpperCase();
+    const tracks = await getTopTracksForCountry(code);
     if (!tracks || tracks.length === 0) return;
 
-    const genre = COUNTRY_GENRES[country.code] || 'pop';
+    const genre = COUNTRY_GENRES[code] || 'pop';
     const mood = GENRE_MOOD[genre] || GENRE_MOOD['pop'];
+    const countryName = regionNames.of(code) || code;
 
-    globeData[country.code] = {
-      country: country.name,
-      code: country.code,
+    globeData[code] = {
+      country: countryName,
+      code,
       tracks,
       energy: mood.energy,
       danceability: mood.danceability,
@@ -67,19 +51,10 @@ async function refreshCountryData(country) {
       updatedAt: new Date().toISOString(),
     };
 
-    console.log(`Updated data for ${country.name}`);
+    console.log(`Updated data for ${countryName}`);
   } catch (err) {
-    console.error(`Failed to update ${country.name}:`, err.message);
+    console.error(`Failed to update ${countryCode}:`, err.message);
   }
-}
-
-async function refreshAllData() {
-  console.log('Refreshing globe data...');
-  for (const country of COUNTRIES) {
-    await refreshCountryData(country);
-    await new Promise(r => setTimeout(r, 500)); // avoid rate limits
-  }
-  console.log('Globe data refresh complete');
 }
 
 // API endpoint for the globe frontend
@@ -87,8 +62,17 @@ app.get('/api/globe-data', (req, res) => {
   res.json(globeData);
 });
 
-app.get('/api/country/:code', (req, res) => {
-  const data = globeData[req.params.code.toUpperCase()];
+app.get('/api/country/:code', async (req, res) => {
+  const code = req.params.code.toUpperCase();
+  const cached = globeData[code];
+  const maxAgeMs = 60 * 60 * 1000;
+  const isFresh = cached && (Date.now() - new Date(cached.updatedAt).getTime() < maxAgeMs);
+
+  if (!isFresh) {
+    await refreshCountryData(code);
+  }
+
+  const data = globeData[code];
   if (!data) return res.status(404).json({ error: 'Country not found' });
   res.json(data);
 });
@@ -210,11 +194,7 @@ async function sendLuffaMessage(recipientId, text) {
   }
 }
 
-// Refresh data every hour
-cron.schedule('0 * * * *', refreshAllData);
-
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  await refreshAllData(); // load data on startup
 });

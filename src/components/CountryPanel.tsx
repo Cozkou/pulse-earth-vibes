@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Play, Pause, Loader2, Send, Music } from 'lucide-react';
-import { COUNTRY_NAME_TO_CODE, COUNTRY_META } from '@/data/countryData';
+import { COUNTRY_NAME_TO_CODE, COUNTRY_META, resolveCountryCode } from '@/data/countryData';
 
 const API_BASE = 'http://localhost:4000';
 
@@ -44,12 +44,34 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const code = COUNTRY_NAME_TO_CODE[countryName];
+  const [resolvedCode, setResolvedCode] = useState<string | null>(COUNTRY_NAME_TO_CODE[countryName] || null);
+  const code = resolvedCode;
   const meta = code ? COUNTRY_META[code] : undefined;
   const displayName = meta?.displayName || countryName;
   const flag = meta?.flag || '🌍';
   const vibe = meta?.vibe || 'Eclectic';
   const vibeColor = meta?.vibeColor || 'hsl(240, 10%, 50%)';
+
+  useEffect(() => {
+    let cancelled = false;
+    const initialCode = COUNTRY_NAME_TO_CODE[countryName];
+    if (initialCode) {
+      setResolvedCode(initialCode);
+      return;
+    }
+
+    setResolvedCode(null);
+    setLoading(true);
+    setError(null);
+
+    resolveCountryCode(countryName).then(codeFromApi => {
+      if (!cancelled) setResolvedCode(codeFromApi);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [countryName]);
 
   useEffect(() => {
     if (!code) {
@@ -172,7 +194,7 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
       </button>
 
       {/* Panel */}
-      <div className="flex-1 h-full panel-blur border-l border-border/30 flex flex-col overflow-hidden">
+      <div className="flex-1 h-full panel-blur retro-panel border-l border-border/30 flex flex-col overflow-hidden">
         {/* Energy bar at top */}
         {data && (
           <div className="h-1 w-full shrink-0 overflow-hidden" style={{ background: 'rgba(255,255,255,0.03)' }}>
@@ -190,12 +212,21 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
         <div className="flex flex-col gap-6 p-6 pt-12 overflow-y-auto flex-1">
           {/* Header */}
           <div>
-            <div className="flex items-center gap-3 mb-3">
-              <span className="text-4xl">{flag}</span>
-              <h2 className="text-2xl font-bold text-foreground tracking-tight">{displayName}</h2>
+            <div className="flex items-start justify-between mb-3">
+              <div className="flex items-center gap-3">
+                <span className="text-4xl">{flag}</span>
+                <h2 className="retro-title text-lg font-bold text-foreground tracking-tight">{displayName}</h2>
+              </div>
+              <button
+                onClick={onClose}
+                aria-label="Close panel"
+                className="w-7 h-7 flex items-center justify-center rounded-sm bg-white/[0.06] hover:bg-white/[0.12] transition-colors border border-white/15"
+              >
+                <X size={12} className="text-muted-foreground" />
+              </button>
             </div>
             <span
-              className="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold"
+              className="retro-title inline-flex items-center rounded-sm px-3 py-1 text-[10px] font-semibold"
               style={{
                 backgroundColor: withAlpha(vibeColor, 0.13),
                 color: vibeColor,
@@ -217,7 +248,7 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
           {error && !loading && (
             <div className="flex-1 flex flex-col items-center justify-center py-12 gap-3">
               <Music className="w-8 h-8 text-muted-foreground/40" />
-              <p className="text-sm text-muted-foreground text-center">{error}</p>
+              <p className="retro-body text-muted-foreground text-center">{error}</p>
             </div>
           )}
 
@@ -226,7 +257,7 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
             <>
               {/* Track list */}
               <div className="flex flex-col gap-1">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                <h3 className="retro-title text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
                   Top Tracks
                 </h3>
                 {data.tracks.slice(0, 5).map((track, i) => {
@@ -242,14 +273,14 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
                         {i + 1}
                       </span>
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-foreground truncate">{track.name}</p>
-                        <p className="text-xs text-muted-foreground truncate">{track.artist}</p>
+                        <p className="retro-body text-foreground truncate">{track.name}</p>
+                        <p className="retro-body text-muted-foreground truncate">{track.artist}</p>
                       </div>
                       {isPlaying && <SoundWave color={vibeColor} />}
                       {track.preview_url ? (
                         <button
                           onClick={() => handlePlay(track)}
-                          className="w-7 h-7 flex items-center justify-center rounded-full bg-white/[0.06] hover:bg-white/[0.12] transition-colors shrink-0 cursor-pointer"
+                          className="w-7 h-7 flex items-center justify-center rounded-sm bg-white/[0.06] hover:bg-white/[0.12] transition-colors shrink-0 cursor-pointer border border-white/15"
                         >
                           {isPlaying ? (
                             <Pause size={12} className="text-foreground" />
@@ -267,7 +298,7 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
 
               {/* Mood */}
               <div className="flex flex-col gap-3">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Mood</h3>
+                <h3 className="retro-title text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Mood</h3>
                 <MoodBar label="Energy" value={Math.round(data.energy * 100)} color="var(--energy)" />
                 <MoodBar label="Danceability" value={Math.round(data.danceability * 100)} color="var(--danceability)" />
                 <MoodBar label="Valence" value={Math.round(data.valence * 100)} color="var(--valence)" />
@@ -282,7 +313,7 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
             <button
               onClick={handleCreatePlaylist}
               disabled={creatingPlaylist}
-              className="w-full flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-semibold transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+              className="retro-title w-full flex items-center justify-center gap-2 rounded-sm py-3 text-[10px] font-semibold transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait"
               style={{
                 backgroundColor: 'hsla(var(--spotify-green) / 0.15)',
                 color: 'hsl(var(--spotify-green))',
@@ -295,7 +326,7 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
 
             <button
               onClick={() => setChatOpen(prev => !prev)}
-              className="w-full flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-semibold transition-colors cursor-pointer"
+              className="retro-title w-full flex items-center justify-center gap-2 rounded-sm py-3 text-[10px] font-semibold transition-colors cursor-pointer"
               style={{
                 backgroundColor: 'hsla(var(--primary) / 0.12)',
                 color: 'hsl(var(--primary))',
@@ -306,7 +337,7 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
             </button>
 
             {chatOpen && (
-              <div className="mt-1 rounded-xl overflow-hidden border border-white/[0.06] bg-white/[0.03]">
+              <div className="retro-panel mt-1 overflow-hidden border border-white/[0.06] bg-white/[0.03]">
                 <div className="flex items-center gap-2 p-3">
                   <input
                     type="text"
@@ -314,13 +345,13 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
                     onChange={e => setChatMsg(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && handleChat()}
                     placeholder="e.g. make me a late night playlist…"
-                    className="flex-1 bg-transparent text-sm text-foreground placeholder-muted-foreground/40 outline-none"
+                    className="retro-body flex-1 bg-transparent text-foreground placeholder-muted-foreground/40 outline-none"
                     disabled={chatLoading}
                   />
                   <button
                     onClick={handleChat}
                     disabled={chatLoading || !chatMsg.trim()}
-                    className="w-7 h-7 flex items-center justify-center rounded-lg bg-white/[0.06] hover:bg-white/[0.12] transition-colors shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="w-7 h-7 flex items-center justify-center rounded-sm bg-white/[0.06] hover:bg-white/[0.12] transition-colors shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed border border-white/15"
                   >
                     {chatLoading ? (
                       <Loader2 size={12} className="animate-spin text-muted-foreground" />
@@ -331,7 +362,7 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
                 </div>
                 {chatReply && (
                   <div className="px-3 pb-3">
-                    <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">{chatReply}</p>
+                    <p className="retro-body text-muted-foreground whitespace-pre-wrap leading-relaxed">{chatReply}</p>
                   </div>
                 )}
               </div>
@@ -358,8 +389,8 @@ function MoodBar({ label, value, color }: { label: string; value: number; color:
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between">
-        <span className="text-xs text-muted-foreground">{label}</span>
-        <span className="text-xs tabular-nums text-muted-foreground">{value}%</span>
+        <span className="retro-title text-[10px] text-muted-foreground">{label}</span>
+        <span className="retro-title text-[10px] tabular-nums text-muted-foreground">{value}%</span>
       </div>
       <div className="h-1.5 w-full rounded-full bg-muted/50 overflow-hidden">
         <div

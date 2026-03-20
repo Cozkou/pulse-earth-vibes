@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -15,26 +15,26 @@
     --popover: 240 15% 8%;
     --popover-foreground: 0 0% 95%;
 
-    --primary: 265 80% 60%;
+    --primary: 325 90% 62%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 240 15% 14%;
+    --secondary: 245 20% 14%;
     --secondary-foreground: 0 0% 85%;
 
-    --muted: 240 10% 16%;
-    --muted-foreground: 240 5% 55%;
+    --muted: 245 14% 16%;
+    --muted-foreground: 190 35% 70%;
 
-    --accent: 160 70% 45%;
+    --accent: 182 88% 48%;
     --accent-foreground: 0 0% 100%;
 
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 240 10% 18%;
-    --input: 240 10% 18%;
-    --ring: 265 80% 60%;
+    --border: 184 60% 32%;
+    --input: 245 18% 18%;
+    --ring: 182 88% 48%;
 
-    --radius: 0.75rem;
+    --radius: 0.125rem;
 
     --globe-bg: 240 40% 4%;
     --panel-bg: 240 15% 6%;
@@ -57,19 +57,46 @@
 
   body {
     @apply bg-background text-foreground font-sans antialiased;
-    font-family: 'DM Sans', system-ui, sans-serif;
+    font-family: 'Press Start 2P', monospace;
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+    background-size: 24px 24px;
   }
 }
 
 @layer utilities {
   .panel-blur {
-    background: hsla(var(--panel-bg) / 0.85);
-    backdrop-filter: blur(24px) saturate(1.2);
-    -webkit-backdrop-filter: blur(24px) saturate(1.2);
+    background: linear-gradient(180deg, hsla(248 26% 10% / 0.92), hsla(237 34% 7% / 0.92));
+    backdrop-filter: blur(10px) saturate(1.05);
+    -webkit-backdrop-filter: blur(10px) saturate(1.05);
+    box-shadow:
+      inset 0 0 0 1px hsla(var(--accent) / 0.26),
+      0 0 0 2px hsla(var(--background) / 0.8),
+      0 0 26px hsla(var(--primary) / 0.28);
   }
 
   .glow-text {
-    text-shadow: 0 0 20px hsla(var(--primary) / 0.4);
+    text-shadow: 0 0 10px hsla(var(--accent) / 0.65), 0 0 18px hsla(var(--primary) / 0.5);
+  }
+
+  .retro-title {
+    font-family: 'Press Start 2P', monospace;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .retro-body {
+    font-family: 'VT323', monospace;
+    letter-spacing: 0.04em;
+    font-size: 1.25rem;
+    line-height: 1.1;
+  }
+
+  .retro-panel {
+    border-radius: 2px;
+    border: 1px solid hsla(var(--accent) / 0.35);
+    box-shadow: inset 0 0 0 1px hsla(var(--primary) / 0.2), 0 0 18px hsla(var(--accent) / 0.2);
   }
 
   .live-pulse {
@@ -123,5 +150,31 @@
   @keyframes soundwave {
     0%, 100% { transform: scaleY(0.3); }
     50% { transform: scaleY(1); }
+  }
+
+  .waveform-layer {
+    background-size: 240px 100%;
+    animation: waveformDrift 18s linear infinite;
+    filter: blur(0.4px);
+  }
+
+  .waveform-layer.slow {
+    animation-duration: 26s;
+    animation-direction: reverse;
+  }
+
+  .equalizer-grid {
+    background-size: 20px 100%, 20px 100%;
+    animation: equalizerPulse 2.8s ease-in-out infinite alternate;
+  }
+
+  @keyframes waveformDrift {
+    from { background-position-x: 0; }
+    to { background-position-x: 240px; }
+  }
+
+  @keyframes equalizerPulse {
+    from { opacity: 0.16; transform: translateY(0); }
+    to { opacity: 0.32; transform: translateY(-4px); }
   }
 }

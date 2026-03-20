@@ -47,12 +47,10 @@ const COUNTRY_GENRES = {
 };
 
 async function getTopTracksForCountry(countryCode) {
-  const genre = COUNTRY_GENRES[countryCode];
-  if (!genre) return null;
-
   const token = await getAccessToken();
+  const countryName = new Intl.DisplayNames(['en'], { type: 'region' }).of(countryCode) || countryCode;
 
-  const url = `https://api.spotify.com/v1/search?q=genre:${encodeURIComponent(genre)}&type=track&market=${countryCode}&limit=10`;
+  const url = `https://api.spotify.com/v1/search?q=${encodeURIComponent(countryName)}&type=track&market=${countryCode}&limit=10`;
   const response = await axios.get(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
