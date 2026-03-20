@@ -321,50 +321,90 @@ export default function GlobeScene({ onCountryClick, isPanelOpen }: GlobeProps) 
 
           const countryData: CountryMeshData = { name, meshes: [], lines: [], baseColor, hoverColor };
 
+          // Process each polygon ring separately with earcut for proper triangulation
           const allVerts: number[] = [];
-          const allLngLat: [number, number][] = [];
+          const allUVs: number[] = [];
 
-          rings.forEach(ring => {
-            const pts = coordsToPoints(ring, GLOBE_RADIUS + 0.002);
-            if (pts.length < 3) return;
+          // For MultiPolygon, each sub-array is [outerRing, ...holes]
+          // For Polygon, coordinates is [outerRing, ...holes]
+          const polygons: number[][][][] = [];
+          if (geom.type === 'Polygon') polygons.push(geom.coordinates);
+          else if (geom.type === 'MultiPolygon') polygons.push(...geom.coordinates);
 
-            const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
-            const line = new THREE.Line(lineGeo, borderMat);
-            countryGroup.add(line);
-            countryData.lines.push(line);
+          // Collect all coords to find bounding box for UVs
+          const allCoords: number[][] = [];
+          polygons.forEach(poly => poly.forEach(ring => ring.forEach(c => allCoords.push(c))));
 
-            for (let i = 1; i < pts.length - 1; i++) {
-              allVerts.push(pts[0].x, pts[0].y, pts[0].z);
-              allLngLat.push([ring[0][0], ring[0][1]]);
-              allVerts.push(pts[i].x, pts[i].y, pts[i].z);
-              allLngLat.push([ring[i][0], ring[i][1]]);
-              const ni = i + 1 < ring.length ? i + 1 : i;
-              allVerts.push(pts[ni].x, pts[ni].y, pts[ni].z);
-              allLngLat.push([ring[ni][0], ring[ni][1]]);
+          // Handle antimeridian: if lng range > 180, shift negative lngs
+          let lngs = allCoords.map(c => c[0]);
+          const lngSpan = Math.max(...lngs) - Math.min(...lngs);
+          const shiftLng = lngSpan > 180;
+
+          function normLng(lng: number) {
+            return shiftLng && lng < 0 ? lng + 360 : lng;
+          }
+
+          let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
+          for (const c of allCoords) {
+            const nl = normLng(c[0]);
+            if (nl < minLng) minLng = nl;
+            if (nl > maxLng) maxLng = nl;
+            if (c[1] < minLat) minLat = c[1];
+            if (c[1] > maxLat) maxLat = c[1];
+          }
+          const lngRange = maxLng - minLng || 1;
+          const latRange = maxLat - minLat || 1;
+
+          polygons.forEach(poly => {
+            // Draw border for outer ring
+            const outerRing = poly[0];
+            const borderPts = coordsToPoints(outerRing, GLOBE_RADIUS + 0.002);
+            if (borderPts.length >= 3) {
+              const lineGeo = new THREE.BufferGeometry().setFromPoints(borderPts);
+              const line = new THREE.Line(lineGeo, borderMat);
+              countryGroup.add(line);
+              countryData.lines.push(line);
+            }
+
+            // Flatten rings for earcut: [outerRing, hole1, hole2, ...]
+            const flatCoords: number[] = [];
+            const holeIndices: number[] = [];
+
+            poly.forEach((ring, ringIdx) => {
+              if (ringIdx > 0) holeIndices.push(flatCoords.length / 2);
+              // Draw hole borders too
+              if (ringIdx > 0) {
+                const holePts = coordsToPoints(ring, GLOBE_RADIUS + 0.002);
+                if (holePts.length >= 3) {
+                  const lineGeo = new THREE.BufferGeometry().setFromPoints(holePts);
+                  const line = new THREE.Line(lineGeo, borderMat);
+                  countryGroup.add(line);
+                  countryData.lines.push(line);
+                }
+              }
+              for (const coord of ring) {
+                flatCoords.push(normLng(coord[0]), coord[1]);
+              }
+            });
+
+            // Triangulate with earcut
+            const indices = earcut(flatCoords, holeIndices.length > 0 ? holeIndices : undefined);
+
+            // Build 3D vertices and UVs from triangulation
+            for (let i = 0; i < indices.length; i++) {
+              const vi = indices[i];
+              const lng = flatCoords[vi * 2];
+              const lat = flatCoords[vi * 2 + 1];
+              const pt = latLngToVec3(lat, shiftLng && lng > 180 ? lng - 360 : lng, GLOBE_RADIUS + 0.002);
+              allVerts.push(pt.x, pt.y, pt.z);
+              allUVs.push((lng - minLng) / lngRange, (lat - minLat) / latRange);
             }
           });
 
           if (allVerts.length > 0) {
-            // Compute UV bounding box
-            let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
-            for (const [lng, lat] of allLngLat) {
-              if (lng < minLng) minLng = lng;
-              if (lng > maxLng) maxLng = lng;
-              if (lat < minLat) minLat = lat;
-              if (lat > maxLat) maxLat = lat;
-            }
-            const lngRange = maxLng - minLng || 1;
-            const latRange = maxLat - minLat || 1;
-
-            const uvs = new Float32Array(allLngLat.length * 2);
-            for (let i = 0; i < allLngLat.length; i++) {
-              uvs[i * 2] = (allLngLat[i][0] - minLng) / lngRange;
-              uvs[i * 2 + 1] = (allLngLat[i][1] - minLat) / latRange;
-            }
-
             const geo = new THREE.BufferGeometry();
             geo.setAttribute('position', new THREE.Float32BufferAttribute(allVerts, 3));
-            geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+            geo.setAttribute('uv', new THREE.Float32BufferAttribute(allUVs, 2));
             geo.computeVertexNormals();
 
             const flagTex = code ? textureCache.get(code) : null;
