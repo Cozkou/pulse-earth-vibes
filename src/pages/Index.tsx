@@ -3,7 +3,6 @@ import { Search, X } from 'lucide-react';
 import TopBar from '@/components/TopBar';
 import CountryPanel from '@/components/CountryPanel';
 import GlobeScene, { type GlobeHandle } from '@/components/GlobeScene';
-import { getCountryData, type CountryMusicData } from '@/data/countryData';
 
 const GLOBE_BG = '#0a0a0f';
 
@@ -28,7 +27,7 @@ const ALL_COUNTRIES = [
 ];
 
 const Index = () => {
-  const [selectedCountry, setSelectedCountry] = useState<CountryMusicData | null>(null);
+  const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
   const [isClosing, setIsClosing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -41,9 +40,8 @@ const Index = () => {
   }, [searchQuery]);
 
   const handleCountryClick = useCallback((name: string) => {
-    const data = getCountryData(name);
     setIsClosing(false);
-    setSelectedCountry(data);
+    setSelectedCountry(name);
   }, []);
 
   const handleClose = useCallback(() => {
@@ -60,9 +58,8 @@ const Index = () => {
     globeRef.current?.flyTo(name);
     // Open panel after a short delay to let fly-to start
     setTimeout(() => {
-      const data = getCountryData(name);
       setIsClosing(false);
-      setSelectedCountry(data);
+      setSelectedCountry(name);
     }, 400);
   }, []);
 
@@ -129,7 +126,7 @@ const Index = () => {
       </div>
 
       {selectedCountry && (
-        <CountryPanel data={selectedCountry} onClose={handleClose} isClosing={isClosing} />
+        <CountryPanel countryName={selectedCountry} onClose={handleClose} isClosing={isClosing} />
       )}
     </div>
   );

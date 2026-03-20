@@ -7,6 +7,49 @@ export interface CountryMusicData {
   mood: { energy: number; danceability: number; valence: number };
 }
 
+export const COUNTRY_NAME_TO_CODE: Record<string, string> = {
+  'United States of America': 'US',
+  'United Kingdom': 'GB',
+  Brazil: 'BR',
+  Nigeria: 'NG',
+  'South Korea': 'KR',
+  Japan: 'JP',
+  Germany: 'DE',
+  France: 'FR',
+  Mexico: 'MX',
+  India: 'IN',
+  Argentina: 'AR',
+  'South Africa': 'ZA',
+  Australia: 'AU',
+  Spain: 'ES',
+  Italy: 'IT',
+};
+
+export interface CountryMeta {
+  flag: string;
+  vibe: string;
+  vibeColor: string;
+  displayName: string;
+}
+
+export const COUNTRY_META: Record<string, CountryMeta> = {
+  US: { flag: '🇺🇸', vibe: 'High Energy', vibeColor: 'hsl(15, 90%, 55%)', displayName: 'United States' },
+  GB: { flag: '🇬🇧', vibe: 'Indie', vibeColor: 'hsl(20, 70%, 50%)', displayName: 'United Kingdom' },
+  BR: { flag: '🇧🇷', vibe: 'Party', vibeColor: 'hsl(40, 90%, 55%)', displayName: 'Brazil' },
+  NG: { flag: '🇳🇬', vibe: 'Afrobeats', vibeColor: 'hsl(160, 70%, 45%)', displayName: 'Nigeria' },
+  KR: { flag: '🇰🇷', vibe: 'K-Pop', vibeColor: 'hsl(330, 90%, 65%)', displayName: 'South Korea' },
+  JP: { flag: '🇯🇵', vibe: 'Melancholic', vibeColor: 'hsl(200, 80%, 55%)', displayName: 'Japan' },
+  DE: { flag: '🇩🇪', vibe: 'Techno', vibeColor: 'hsl(0, 0%, 70%)', displayName: 'Germany' },
+  FR: { flag: '🇫🇷', vibe: 'Dreamy', vibeColor: 'hsl(265, 80%, 60%)', displayName: 'France' },
+  MX: { flag: '🇲🇽', vibe: 'Reggaeton', vibeColor: 'hsl(350, 80%, 55%)', displayName: 'Mexico' },
+  IN: { flag: '🇮🇳', vibe: 'Euphoric', vibeColor: 'hsl(330, 80%, 60%)', displayName: 'India' },
+  AR: { flag: '🇦🇷', vibe: 'Latin Pop', vibeColor: 'hsl(200, 70%, 55%)', displayName: 'Argentina' },
+  ZA: { flag: '🇿🇦', vibe: 'Amapiano', vibeColor: 'hsl(45, 90%, 50%)', displayName: 'South Africa' },
+  AU: { flag: '🇦🇺', vibe: 'Chill', vibeColor: 'hsl(200, 60%, 50%)', displayName: 'Australia' },
+  ES: { flag: '🇪🇸', vibe: 'Flamenco Pop', vibeColor: 'hsl(10, 85%, 50%)', displayName: 'Spain' },
+  IT: { flag: '🇮🇹', vibe: 'Melodic', vibeColor: 'hsl(140, 60%, 45%)', displayName: 'Italy' },
+};
+
 const dotColors = [
   'hsl(330, 80%, 60%)',
   'hsl(200, 80%, 55%)',

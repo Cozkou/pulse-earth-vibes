@@ -98,4 +98,30 @@
     from { transform: translateX(0); opacity: 1; }
     to { transform: translateX(100%); opacity: 0; }
   }
+
+  .soundwave {
+    display: flex;
+    align-items: flex-end;
+    gap: 1.5px;
+    height: 14px;
+  }
+
+  .soundwave span {
+    display: block;
+    width: 2px;
+    border-radius: 1px;
+    background: currentColor;
+    transform-origin: bottom;
+    animation: soundwave 0.8s ease-in-out infinite;
+  }
+
+  .soundwave span:nth-child(1) { height: 10px; animation-delay: 0s; }
+  .soundwave span:nth-child(2) { height: 14px; animation-delay: 0.15s; }
+  .soundwave span:nth-child(3) { height: 6px; animation-delay: 0.3s; }
+  .soundwave span:nth-child(4) { height: 12px; animation-delay: 0.1s; }
+
+  @keyframes soundwave {
+    0%, 100% { transform: scaleY(0.3); }
+    50% { transform: scaleY(1); }
+  }
 }
