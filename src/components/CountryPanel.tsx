@@ -40,8 +40,15 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMsg, setChatMsg] = useState('');
   const [chatReply, setChatReply] = useState<string | null>(null);
+  const [chatUrl, setChatUrl] = useState<string | null>(null);
   const [chatLoading, setChatLoading] = useState(false);
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
+  const [playlistResult, setPlaylistResult] = useState<{
+    url: string;
+    name: string;
+    tracks: string[];
+    error?: string;
+  } | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const [resolvedCode, setResolvedCode] = useState<string | null>(COUNTRY_NAME_TO_CODE[countryName] || null);
@@ -87,6 +94,8 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
     setPlayingId(null);
     setChatOpen(false);
     setChatReply(null);
+    setChatUrl(null);
+    setPlaylistResult(null);
 
     fetch(`${API_BASE}/api/country/${code}`)
       .then(res => {
@@ -141,6 +150,7 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
   const handleCreatePlaylist = async () => {
     if (!code) return;
     setCreatingPlaylist(true);
+    setPlaylistResult(null);
     try {
       const res = await fetch(`${API_BASE}/api/create-playlist`, {
         method: 'POST',
@@ -148,9 +158,13 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
         body: JSON.stringify({ countryCode: code }),
       });
       const json = await res.json();
-      if (json.url) window.open(json.url, '_blank');
+      if (json.url) {
+        setPlaylistResult({ url: json.url, name: json.name, tracks: json.tracks || [] });
+      } else {
+        setPlaylistResult({ url: '', name: '', tracks: [], error: json.error || 'Failed to create playlist' });
+      }
     } catch (_e) {
-      // network error — ignore
+      setPlaylistResult({ url: '', name: '', tracks: [], error: 'Network error — is the server running?' });
     } finally {
       setCreatingPlaylist(false);
     }
@@ -162,6 +176,7 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
     setChatMsg('');
     setChatLoading(true);
     setChatReply(null);
+    setChatUrl(null);
     try {
       const res = await fetch(`${API_BASE}/api/chat`, {
         method: 'POST',
@@ -170,7 +185,7 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
       });
       const json = await res.json();
       setChatReply(json.reply);
-      if (json.url) window.open(json.url, '_blank');
+      if (json.url) setChatUrl(json.url);
     } catch (_e) {
       setChatReply('Something went wrong, try again.');
     } finally {
@@ -324,6 +339,40 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
               {creatingPlaylist ? 'Creating…' : 'Create Playlist'}
             </button>
 
+            {playlistResult && (
+              <div className="retro-panel mt-1 overflow-hidden border border-white/[0.06] bg-white/[0.03] p-3 flex flex-col gap-2">
+                {playlistResult.error ? (
+                  <p className="retro-body text-red-400">{playlistResult.error}</p>
+                ) : (
+                  <>
+                    <p className="retro-title text-[10px] text-foreground">
+                      🎵 {playlistResult.name}
+                    </p>
+                    {playlistResult.tracks.length > 0 && (
+                      <div className="flex flex-col gap-0.5">
+                        {playlistResult.tracks.map((t, i) => (
+                          <p key={i} className="retro-body text-muted-foreground text-sm">{t}</p>
+                        ))}
+                      </div>
+                    )}
+                    <a
+                      href={playlistResult.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="retro-title flex items-center justify-center gap-2 rounded-sm py-2.5 text-[10px] font-semibold transition-colors"
+                      style={{
+                        backgroundColor: 'hsla(var(--spotify-green) / 0.15)',
+                        color: 'hsl(var(--spotify-green))',
+                        border: '1px solid hsla(var(--spotify-green) / 0.2)',
+                      }}
+                    >
+                      🎧 Open in Spotify
+                    </a>
+                  </>
+                )}
+              </div>
+            )}
+
             <button
               onClick={() => setChatOpen(prev => !prev)}
               className="retro-title w-full flex items-center justify-center gap-2 rounded-sm py-3 text-[10px] font-semibold transition-colors cursor-pointer"
@@ -333,7 +382,7 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
                 border: '1px solid hsla(var(--primary) / 0.2)',
               }}
             >
-              💬 Ask Pulse Bot
+              💬 Ask Pulse Earth Vibes
             </button>
 
             {chatOpen && (
@@ -361,8 +410,23 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
                   </button>
                 </div>
                 {chatReply && (
-                  <div className="px-3 pb-3">
+                  <div className="px-3 pb-3 flex flex-col gap-2">
                     <p className="retro-body text-muted-foreground whitespace-pre-wrap leading-relaxed">{chatReply}</p>
+                    {chatUrl && (
+                      <a
+                        href={chatUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="retro-title flex items-center justify-center gap-2 rounded-sm py-2.5 text-[10px] font-semibold transition-colors"
+                        style={{
+                          backgroundColor: 'hsla(var(--spotify-green) / 0.15)',
+                          color: 'hsl(var(--spotify-green))',
+                          border: '1px solid hsla(var(--spotify-green) / 0.2)',
+                        }}
+                      >
+                        🎧 Open Playlist in Spotify
+                      </a>
+                    )}
                   </div>
                 )}
               </div>
