@@ -10,17 +10,21 @@ interface CountryPanelProps {
 const CountryPanel = ({ data, onClose, isClosing }: CountryPanelProps) => {
   return (
     <div
-      className={`fixed top-0 right-0 z-40 h-full w-full max-w-[400px] panel-blur border-l border-border/30 flex flex-col ${
+      className={`fixed top-0 right-0 z-40 h-full w-full max-w-[400px] flex ${
         isClosing ? 'slide-out-right' : 'slide-in-right'
       }`}
     >
-      {/* Close button */}
+      {/* Close bar on the left edge */}
       <button
         onClick={onClose}
-        className="absolute top-4 right-4 p-2 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors active:scale-95"
+        className="h-full w-8 flex items-center justify-center shrink-0 bg-white/[0.03] hover:bg-white/[0.08] border-r border-white/[0.06] transition-colors active:scale-[0.97] group cursor-pointer"
+        aria-label="Close panel"
       >
-        <X size={18} />
+        <X size={14} className="text-muted-foreground/60 group-hover:text-foreground transition-colors" />
       </button>
+
+      {/* Panel content */}
+      <div className="flex-1 h-full panel-blur border-l border-border/30 flex flex-col overflow-hidden">
 
       <div className="flex flex-col gap-6 p-6 pt-16 overflow-y-auto flex-1">
         {/* Country header */}
