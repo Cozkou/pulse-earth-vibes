@@ -2,6 +2,7 @@ import { useRef, useEffect, useCallback, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { feature } from 'topojson-client';
+import earcut from 'earcut';
 
 const GLOBE_RADIUS = 1;
 const GLOBE_BG = '#0a0a0f';
