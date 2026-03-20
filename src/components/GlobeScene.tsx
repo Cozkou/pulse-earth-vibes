@@ -260,7 +260,7 @@ export default function GlobeScene({ onCountryClick, isPanelOpen }: GlobeProps) 
         const landMat = new THREE.MeshBasicMaterial({
           color: LAND_COLOR,
           transparent: true,
-          opacity: 0.6,
+          opacity: 0.75,
           side: THREE.DoubleSide,
         });
 
