@@ -211,11 +211,11 @@ export default function GlobeScene({ onCountryClick, isPanelOpen }: GlobeProps) 
       markerNames.push(name);
 
       // Outer glow ring
-      const ringGeo = new THREE.RingGeometry(0.03, 0.045, 32);
+      const ringGeo = new THREE.RingGeometry(0.04, 0.06, 32);
       const ringMat = new THREE.MeshBasicMaterial({
         color: COUNTRY_COLOR,
         transparent: true,
-        opacity: 0.3,
+        opacity: 0.5,
         side: THREE.DoubleSide,
       });
       const ring = new THREE.Mesh(ringGeo, ringMat);
