@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Search, X, Sparkles } from 'lucide-react';
 import TopBar from '@/components/TopBar';
 import CountryPanel from '@/components/CountryPanel';
@@ -27,11 +28,11 @@ const ALL_COUNTRIES = [
 ];
 
 const Index = () => {
+  const navigate = useNavigate();
   const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
   const [isClosing, setIsClosing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
-  const [crystalBallMode, setCrystalBallMode] = useState(false);
   const globeRef = useRef<GlobeHandle>(null);
 
   const filtered = useMemo(() => {
@@ -75,7 +76,7 @@ const Index = () => {
   return (
     <div className="relative w-screen h-screen overflow-hidden" style={{ background: GLOBE_BG }}>
       <TopBar />
-      <GlobeScene ref={globeRef} onCountryClick={handleCountryClick} isPanelOpen={!!selectedCountry} crystalBallMode={crystalBallMode} />
+      <GlobeScene ref={globeRef} onCountryClick={handleCountryClick} isPanelOpen={!!selectedCountry} />
 
       {/* Minimal search in top-right */}
       <div className="absolute top-16 right-4 z-40 w-[min(88vw,320px)]">
@@ -145,13 +146,17 @@ const Index = () => {
       </div>
 
       <button
-        onClick={() => setCrystalBallMode((v) => !v)}
-        aria-label={crystalBallMode ? 'Show globe' : 'Crystal ball view'}
-        className="retro-panel absolute bottom-6 left-6 z-40 flex items-center gap-2 px-4 py-2.5 bg-[rgba(9,12,28,0.82)] hover:bg-[rgba(12,16,34,0.95)] transition-colors"
+        type="button"
+        onClick={() => navigate('/crystal')}
+        aria-label="Open Crystal Ball — camera, music by mood"
+        className="retro-panel absolute bottom-6 left-6 z-40 flex max-w-[min(calc(100vw-3rem),220px)] flex-col items-start gap-0.5 px-4 py-2.5 text-left bg-[rgba(9,12,28,0.82)] hover:bg-[rgba(12,16,34,0.95)] transition-colors"
       >
-        <Sparkles className="w-4 h-4 text-blue-300/80" />
-        <span className="retro-title text-xs text-blue-200/90">
-          {crystalBallMode ? 'Globe' : 'Crystal Ball'}
+        <span className="flex items-center gap-2">
+          <Sparkles className="w-4 h-4 shrink-0 text-blue-300/80" />
+          <span className="retro-title text-xs text-blue-200/90">Crystal Ball</span>
+        </span>
+        <span className="retro-body pl-6 text-[10px] leading-tight text-blue-300/50">
+          Camera · mood music · session
         </span>
       </button>
 

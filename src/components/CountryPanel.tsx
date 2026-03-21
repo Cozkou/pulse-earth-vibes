@@ -3,6 +3,7 @@ import { X, Play, Pause, Loader2, Music } from 'lucide-react';
 import { COUNTRY_NAME_TO_CODE, COUNTRY_META, resolveCountryCode } from '@/data/countryData';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
+const COUNTRY_FETCH_TIMEOUT_MS = 45_000;
 
 interface ApiTrack {
   id: string;
@@ -83,13 +84,16 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
     }
 
     let cancelled = false;
+    const ac = new AbortController();
+    const t = window.setTimeout(() => ac.abort(), COUNTRY_FETCH_TIMEOUT_MS);
+
     setLoading(true);
     setError(null);
     setData(null);
     setPlayingId(null);
     setPlaylistResult(null);
 
-    fetch(`${API_BASE}/api/country/${code}`)
+    fetch(`${API_BASE}/api/country/${code}`, { signal: ac.signal })
       .then(res => {
         if (!res.ok) throw new Error('not found');
         return res.json();
@@ -97,15 +101,24 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
       .then(d => {
         if (!cancelled) setData(d);
       })
-      .catch(() => {
-        if (!cancelled) setError('No music data available for this country yet.');
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        const aborted = err instanceof DOMException && err.name === 'AbortError';
+        setError(
+          aborted
+            ? 'Request timed out — check that the API server is running and try again.'
+            : 'No music data available for this country yet.',
+        );
       })
       .finally(() => {
+        clearTimeout(t);
         if (!cancelled) setLoading(false);
       });
 
     return () => {
       cancelled = true;
+      ac.abort();
+      clearTimeout(t);
     };
   }, [code]);
 
@@ -164,21 +177,22 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
 
   return (
     <div
-      className={`fixed top-0 right-0 z-40 h-full w-full max-w-[400px] flex ${
+      className={`fixed z-40 flex max-h-[min(72vh,560px)] w-full max-w-[400px] flex-col overflow-hidden rounded-t-2xl border-t border-x border-white/[0.08] shadow-2xl md:max-h-none md:flex-row md:rounded-none md:border-t-0 md:shadow-none bottom-0 right-0 md:top-0 md:bottom-auto md:h-full md:border-x-0 ${
         isClosing ? 'slide-out-right' : 'slide-in-right'
       }`}
     >
-      {/* Close bar */}
+      {/* Mobile: top close row — desktop: slim side rail */}
       <button
         onClick={onClose}
-        className="h-full w-8 flex items-center justify-center shrink-0 bg-white/[0.03] hover:bg-white/[0.08] border-r border-white/[0.06] transition-colors active:scale-[0.97] group cursor-pointer"
+        className="group flex h-11 w-full shrink-0 items-center justify-center gap-2 border-b border-white/[0.06] bg-white/[0.03] hover:bg-white/[0.08] transition-colors active:scale-[0.99] md:h-full md:w-8 md:flex-col md:border-b-0 md:border-r"
         aria-label="Close panel"
       >
         <X size={14} className="text-muted-foreground/60 group-hover:text-foreground transition-colors" />
+        <span className="retro-title text-[10px] text-muted-foreground md:hidden">Close</span>
       </button>
 
       {/* Panel */}
-      <div className="flex-1 h-full panel-blur retro-panel border-l border-border/30 flex flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden panel-blur retro-panel md:border-l md:border-border/30">
         {/* Energy bar at top */}
         {data && (
           <div className="h-1 w-full shrink-0 overflow-hidden" style={{ background: 'rgba(255,255,255,0.03)' }}>
@@ -193,7 +207,7 @@ const CountryPanel = ({ countryName, onClose, isClosing }: CountryPanelProps) =>
           </div>
         )}
 
-        <div className="flex flex-col gap-6 p-6 pt-12 overflow-y-auto flex-1">
+        <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-6 pt-6 md:pt-12">
           {/* Header */}
           <div>
             <div className="flex items-start justify-between mb-3">

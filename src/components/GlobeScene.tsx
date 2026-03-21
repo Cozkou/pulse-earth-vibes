@@ -213,6 +213,7 @@ const GlobeScene = forwardRef<GlobeHandle, GlobeProps>(({ onCountryClick, isPane
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
     renderer.setSize(container.clientWidth, container.clientHeight);
     renderer.setClearColor(new THREE.Color(GLOBE_BG), 1);
+    renderer.domElement.style.touchAction = 'none';
     container.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
@@ -536,7 +537,10 @@ const GlobeScene = forwardRef<GlobeHandle, GlobeProps>(({ onCountryClick, isPane
 
   useEffect(() => {
     const s = sceneRef.current;
-    if (s) s.controls.autoRotate = !isPanelOpen;
+    if (!s) return;
+    s.controls.autoRotate = !isPanelOpen;
+    s.controls.enabled = true;
+    s.controls.enableRotate = true;
   }, [isPanelOpen]);
 
   useEffect(() => {

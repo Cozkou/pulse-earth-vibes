@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import * as THREE from 'three';
 import * as faceapi from '@vladmandic/face-api';
 import { useNavigate } from 'react-router-dom';
@@ -7,10 +7,23 @@ import { Video, VideoOff, Loader2, Music } from 'lucide-react';
 const API_BASE = import.meta.env.VITE_API_URL || '';
 const GLOBE_BG = '#0a0a0f';
 const TRANSITION_DURATION_MS = 4000;
-const HAPPINESS_DEBOUNCE_MS = 3000;
+/** Min time between auto–music changes from mood shifts */
+const HAPPINESS_DEBOUNCE_MS = 14_000;
+/** Smoothed happiness must move this much (0–1) before a new track fetch */
+const HAPPINESS_MUSIC_JUMP_THRESHOLD = 0.24;
+/** ~seconds to settle toward the live face reading (higher = calmer bar) */
+const HAPPINESS_SMOOTH_TIME_CONSTANT_S = 4;
+const MAX_HAPPINESS_DT_S = 0.12;
 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
 
-type YouTubeVideo = { source: 'youtube'; videoId: string; title: string };
+type YouTubeVideo = { source: 'youtube'; videoId: string; title: string; channelTitle?: string };
+
+type CrystalSpotifyMatch = {
+  videoId: string;
+  youtubeTitle: string;
+  searchQuery: string;
+  spotify: { id: string; name: string; artist: string; spotify_url: string } | null;
+};
 
 function happinessFromExpressions(expressions: Record<string, number>): number {
   if (!expressions) return 0.5;
@@ -26,40 +39,209 @@ function isSmiling(expressions: Record<string, number>): boolean {
 }
 
 const YT_ERROR_CODES = new Set([2, 5, 100, 101, 150]);
+const YT_START_SECONDS = 90;
 
-function YouTubePlayer({ videoId, onError }: { videoId: string; onError: () => void }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const playerRef = useRef<{ destroy: () => void } | null>(null);
+type YTPlayerApi = {
+  destroy: () => void;
+  mute: () => void;
+  unMute: () => void;
+  playVideo: () => void;
+  pauseVideo: () => void;
+  stopVideo: () => void;
+  setVolume: (v: number) => void;
+  loadVideoById: (opts: { videoId: string; startSeconds?: number }) => void;
+  cueVideoById: (opts: { videoId: string; startSeconds?: number }) => void;
+};
+
+/**
+ * Two stacked iframe players: one plays audible; the other cues the next track muted so swaps are immediate.
+ */
+function CrystalYouTubeDualStage({
+  active,
+  preload,
+  onError,
+  onEnded,
+}: {
+  active: YouTubeVideo | null;
+  preload: YouTubeVideo | null;
+  onError: () => void;
+  onEnded: () => void;
+}) {
+  const slot0Ref = useRef<HTMLDivElement>(null);
+  const slot1Ref = useRef<HTMLDivElement>(null);
+  const playersRef = useRef<[YTPlayerApi | null, YTPlayerApi | null]>([null, null]);
+  const activeSlotRef = useRef(0);
+  const slotVideoIdRef = useRef<[string | null, string | null]>([null, null]);
+  const [playersReady, setPlayersReady] = useState(false);
+  const [topSlot, setTopSlot] = useState(0);
   const onErrorRef = useRef(onError);
+  const onEndedRef = useRef(onEnded);
   onErrorRef.current = onError;
+  onEndedRef.current = onEnded;
 
   useEffect(() => {
-    if (!videoId || !containerRef.current) return;
+    const el0 = slot0Ref.current;
+    const el1 = slot1Ref.current;
+    if (!el0 || !el1) return;
     let cancelled = false;
+
     (window as unknown as { ytReady?: Promise<void> }).ytReady?.then(() => {
-      if (cancelled || !containerRef.current) return;
-      const YT = (window as unknown as { YT?: { Player: new (el: HTMLElement, opts: { videoId: string; playerVars: object; events: { onError: (e: { data: number }) => void } }) => { destroy: () => void } } }).YT;
+      if (cancelled) return;
+      const YT = (window as unknown as {
+        YT?: {
+          Player: new (
+            el: HTMLElement,
+            opts: {
+              width?: string;
+              height?: string;
+              playerVars?: Record<string, number | string>;
+              events?: {
+                onStateChange?: (e: { target: YTPlayerApi; data: number }) => void;
+                onError?: (e: { target: YTPlayerApi; data: number }) => void;
+              };
+            }
+          ) => YTPlayerApi;
+        };
+      }).YT;
       if (!YT?.Player) return;
-      containerRef.current.innerHTML = '';
-      const player = new YT.Player(containerRef.current, {
-        videoId,
-        playerVars: { autoplay: 1, start: 90 },
-        events: {
-          onError: (e: { data: number }) => {
-            if (YT_ERROR_CODES.has(e.data)) onErrorRef.current();
+
+      const make = (el: HTMLElement, slot: 0 | 1) =>
+        new YT.Player(el, {
+          width: '100%',
+          height: '100%',
+          playerVars: { autoplay: 0, controls: 1, rel: 0, modestbranding: 1 },
+          events: {
+            onStateChange: (e) => {
+              if (e.data !== 0) return;
+              if (slot !== activeSlotRef.current) return;
+              onEndedRef.current();
+            },
+            onError: (e) => {
+              if (slot !== activeSlotRef.current) return;
+              if (YT_ERROR_CODES.has(e.data)) onErrorRef.current();
+            },
           },
-        },
-      });
-      playerRef.current = player;
+        });
+
+      const p0 = make(el0, 0);
+      const p1 = make(el1, 1);
+      playersRef.current = [p0, p1];
+      if (!cancelled) setPlayersReady(true);
     });
+
     return () => {
       cancelled = true;
-      playerRef.current?.destroy?.();
-      playerRef.current = null;
+      setPlayersReady(false);
+      playersRef.current[0]?.destroy?.();
+      playersRef.current[1]?.destroy?.();
+      playersRef.current = [null, null];
+      slotVideoIdRef.current = [null, null];
     };
-  }, [videoId]);
+  }, []);
 
-  return <div ref={containerRef} className="w-full aspect-video bg-black" />;
+  const activeId = active?.videoId ?? null;
+  const preloadId = preload?.videoId ?? null;
+
+  useEffect(() => {
+    if (!playersReady) return;
+    const [p0, p1] = playersRef.current;
+    if (!p0 || !p1) return;
+
+    if (!activeId) {
+      try {
+        p0.pauseVideo();
+        p1.pauseVideo();
+        p0.mute();
+        p1.mute();
+      } catch {
+        /* iframe API */
+      }
+      slotVideoIdRef.current = [null, null];
+      return;
+    }
+
+    const a = activeSlotRef.current;
+    const b = 1 - a;
+    const pA = a === 0 ? p0 : p1;
+    const pB = a === 0 ? p1 : p0;
+
+    if (slotVideoIdRef.current[b] === activeId) {
+      try {
+        pA.pauseVideo();
+        pA.mute();
+        pB.unMute();
+        pB.setVolume(100);
+        pB.playVideo();
+        activeSlotRef.current = b;
+        slotVideoIdRef.current[a] = null;
+        slotVideoIdRef.current[b] = activeId;
+        setTopSlot(b);
+      } catch {
+        /* */
+      }
+      return;
+    }
+
+    try {
+      pB.pauseVideo();
+      pB.mute();
+      pA.unMute();
+      pA.setVolume(100);
+      pA.loadVideoById({ videoId: activeId, startSeconds: YT_START_SECONDS });
+      slotVideoIdRef.current[a] = activeId;
+    } catch {
+      /* */
+    }
+  }, [activeId, playersReady]);
+
+  useEffect(() => {
+    if (!playersReady) return;
+    const [p0, p1] = playersRef.current;
+    if (!p0 || !p1) return;
+
+    const a = activeSlotRef.current;
+    const b = 1 - a;
+    const pB = a === 0 ? p1 : p0;
+
+    if (!preloadId || preloadId === activeId) {
+      try {
+        pB.pauseVideo();
+        pB.mute();
+        pB.stopVideo();
+      } catch {
+        /* */
+      }
+      slotVideoIdRef.current[b] = null;
+      return;
+    }
+
+    if (slotVideoIdRef.current[b] === preloadId) return;
+
+    try {
+      pB.mute();
+      pB.cueVideoById({ videoId: preloadId, startSeconds: YT_START_SECONDS });
+      slotVideoIdRef.current[b] = preloadId;
+    } catch {
+      /* */
+    }
+  }, [preloadId, activeId, playersReady]);
+
+  return (
+    <div className="relative w-full aspect-video bg-black">
+      <div
+        ref={slot0Ref}
+        className={`absolute inset-0 transition-opacity duration-150 ${
+          topSlot === 0 ? 'z-10 opacity-100' : 'z-0 opacity-0 pointer-events-none'
+        }`}
+      />
+      <div
+        ref={slot1Ref}
+        className={`absolute inset-0 transition-opacity duration-150 ${
+          topSlot === 1 ? 'z-10 opacity-100' : 'z-0 opacity-0 pointer-events-none'
+        }`}
+      />
+    </div>
+  );
 }
 
 const Crystal = () => {
@@ -68,8 +250,10 @@ const Crystal = () => {
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const sceneRef = useRef<{ frameId: number } | null>(null);
   const lastHappinessRef = useRef(0.5);
+  const smoothedHappinessRef = useRef(0.5);
+  const lastHappinessSampleTsRef = useRef(performance.now());
   const lastMusicRef = useRef(0);
-  const youtubeQueueRef = useRef<YouTubeVideo[]>([]);
+  const [youtubeQueue, setYoutubeQueue] = useState<YouTubeVideo[]>([]);
 
   const [cameraOn, setCameraOn] = useState(false);
   const [modelsLoaded, setModelsLoaded] = useState(false);
@@ -80,6 +264,115 @@ const Crystal = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [spotifyMatches, setSpotifyMatches] = useState<CrystalSpotifyMatch[] | null>(null);
+  const [resolveLoading, setResolveLoading] = useState(false);
+  const [resolveError, setResolveError] = useState<string | null>(null);
+  const [playlistLoading, setPlaylistLoading] = useState(false);
+  const [playlistResult, setPlaylistResult] = useState<{ url: string; name?: string } | null>(null);
+  const [playlistError, setPlaylistError] = useState<string | null>(null);
+
+  const sessionResolveKey = useMemo(
+    () =>
+      sessionEnded && sessionItems.length > 0
+        ? sessionItems.map((v) => `${v.videoId}\t${v.title}`).join('\n')
+        : '',
+    [sessionEnded, sessionItems],
+  );
+
+  useEffect(() => {
+    if (!sessionResolveKey) return;
+    let cancelled = false;
+    setResolveLoading(true);
+    setResolveError(null);
+    setSpotifyMatches(null);
+    setPlaylistResult(null);
+    setPlaylistError(null);
+
+    fetch(`${API_BASE}/api/crystal-youtube-to-spotify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        videos: sessionItems.map((v) => ({
+          videoId: v.videoId,
+          title: v.title,
+          channelTitle: v.channelTitle ?? '',
+        })),
+      }),
+    })
+      .then(async (res) => {
+        const text = await res.text();
+        let data: { error?: string; matches?: CrystalSpotifyMatch[] } = {};
+        try {
+          data = JSON.parse(text) as typeof data;
+        } catch {
+          /* ignore */
+        }
+        if (!res.ok) {
+          throw new Error(
+            typeof data.error === 'string' ? data.error : text.slice(0, 160) || `Server error (${res.status})`,
+          );
+        }
+        return data as { matches: CrystalSpotifyMatch[] };
+      })
+      .then((data) => {
+        if (!cancelled) setSpotifyMatches(data.matches || []);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setResolveError(e instanceof Error ? e.message : 'Could not match tracks');
+      })
+      .finally(() => {
+        if (!cancelled) setResolveLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sessionResolveKey encodes sessionItems
+  }, [sessionResolveKey]);
+
+  const handleCreateSpotifyPlaylist = useCallback(async () => {
+    if (!spotifyMatches) return;
+    const matched = spotifyMatches.filter((m) => m.spotify);
+    const byId = new Map<string, { id: string; name: string; artist: string }>();
+    for (const m of matched) {
+      if (m.spotify && !byId.has(m.spotify.id)) {
+        byId.set(m.spotify.id, { id: m.spotify.id, name: m.spotify.name, artist: m.spotify.artist });
+      }
+    }
+    const tracks = [...byId.values()];
+    if (tracks.length === 0) return;
+    setPlaylistLoading(true);
+    setPlaylistError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/create-session-playlist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          trackIds: tracks.map((t) => t.id),
+          tracks,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof json.error === 'string' ? json.error : 'Playlist failed');
+      setPlaylistResult({ url: json.url, name: json.name });
+    } catch (e: unknown) {
+      setPlaylistError(e instanceof Error ? e.message : 'Playlist failed');
+    } finally {
+      setPlaylistLoading(false);
+    }
+  }, [spotifyMatches]);
+
+  const closeSessionModal = useCallback(() => {
+    setSessionItems([]);
+    setCurrentItem(null);
+    setSessionEnded(false);
+    setSpotifyMatches(null);
+    setResolveError(null);
+    setResolveLoading(false);
+    setPlaylistResult(null);
+    setPlaylistError(null);
+  }, []);
+
   const fetchYouTubeByHappiness = useCallback(async (h: number): Promise<YouTubeVideo[]> => {
     try {
       const res = await fetch(`${API_BASE}/api/youtube-by-happiness`, {
@@ -89,10 +382,11 @@ const Crystal = () => {
       });
       if (!res.ok) return [];
       const { videos } = await res.json();
-      return (videos || []).map((v: { videoId: string; title: string }) => ({
+      return (videos || []).map((v: { videoId: string; title: string; channelTitle?: string }) => ({
         source: 'youtube' as const,
         videoId: v.videoId,
         title: v.title,
+        channelTitle: v.channelTitle || '',
       }));
     } catch {
       return [];
@@ -106,8 +400,8 @@ const Crystal = () => {
       try {
         const youtubeVideos = await fetchYouTubeByHappiness(h);
         if (youtubeVideos.length > 0) {
-          youtubeQueueRef.current = youtubeVideos.slice(1);
-          const first = youtubeVideos[0];
+          const [first, ...rest] = youtubeVideos;
+          setYoutubeQueue(rest);
           setCurrentItem(first);
           setSessionItems((prev) => [...prev, first]);
         } else {
@@ -207,14 +501,21 @@ const Crystal = () => {
           ctx.stroke();
 
           if (result.expressions) {
-            const h = happinessFromExpressions(result.expressions);
-            setHappiness(h);
-            const now = Date.now();
-            const diff = Math.abs(h - lastHappinessRef.current);
-            if (diff > 0.15 && now - lastMusicRef.current > HAPPINESS_DEBOUNCE_MS) {
-              lastHappinessRef.current = h;
-              lastMusicRef.current = now;
-              playMusicForHappiness(h);
+            const raw = happinessFromExpressions(result.expressions);
+            const ts = performance.now();
+            const dtS = Math.min(MAX_HAPPINESS_DT_S, (ts - lastHappinessSampleTsRef.current) / 1000);
+            lastHappinessSampleTsRef.current = ts;
+            const alpha = 1 - Math.exp(-dtS / HAPPINESS_SMOOTH_TIME_CONSTANT_S);
+            smoothedHappinessRef.current += (raw - smoothedHappinessRef.current) * alpha;
+            const smoothed = smoothedHappinessRef.current;
+            setHappiness(smoothed);
+
+            const nowMs = Date.now();
+            const diff = Math.abs(smoothed - lastHappinessRef.current);
+            if (diff > HAPPINESS_MUSIC_JUMP_THRESHOLD && nowMs - lastMusicRef.current > HAPPINESS_DEBOUNCE_MS) {
+              lastHappinessRef.current = smoothed;
+              lastMusicRef.current = nowMs;
+              playMusicForHappiness(smoothed);
             }
           }
         }
@@ -346,6 +647,10 @@ const Crystal = () => {
         video.srcObject = stream;
         video.onloadeddata = () => video.play();
       }
+      smoothedHappinessRef.current = 0.5;
+      lastHappinessRef.current = 0.5;
+      lastHappinessSampleTsRef.current = performance.now();
+      setHappiness(0.5);
       setCameraOn(true);
       setError(null);
     } catch (e) {
@@ -355,23 +660,30 @@ const Crystal = () => {
 
   const playSample = () => {
     setError(null);
+    smoothedHappinessRef.current = 0.6;
+    lastHappinessRef.current = 0.6;
+    lastMusicRef.current = Date.now();
+    setHappiness(0.6);
     playMusicForHappiness(0.6);
   };
 
   const skipToNextYoutube = useCallback(async () => {
-    const queue = youtubeQueueRef.current;
-    if (queue.length > 0) {
-      const next = queue.shift()!;
-      youtubeQueueRef.current = [...queue];
-      setCurrentItem(next);
-      setSessionItems((prev) => [...prev, next]);
+    let nextFromQueue: YouTubeVideo | null = null;
+    setYoutubeQueue((queue) => {
+      if (queue.length === 0) return queue;
+      nextFromQueue = queue[0];
+      return queue.slice(1);
+    });
+    if (nextFromQueue) {
+      setCurrentItem(nextFromQueue);
+      setSessionItems((prev) => [...prev, nextFromQueue!]);
       return;
     }
-    const h = lastHappinessRef.current;
-    const videos = await fetchYouTubeByHappiness(h);
+
+    const videos = await fetchYouTubeByHappiness(smoothedHappinessRef.current);
     if (videos.length > 0) {
-      youtubeQueueRef.current = videos.slice(1);
-      const first = videos[0];
+      const [first, ...rest] = videos;
+      setYoutubeQueue(rest);
       setCurrentItem(first);
       setSessionItems((prev) => [...prev, first]);
     } else {
@@ -409,7 +721,12 @@ const Crystal = () => {
 
       {currentItem?.source === 'youtube' && (
         <div className="fixed bottom-40 left-1/2 -translate-x-1/2 z-40 w-[min(90vw,320px)] rounded-lg overflow-hidden border border-white/10 transition-opacity duration-300">
-          <YouTubePlayer videoId={currentItem.videoId} onError={skipToNextYoutube} />
+          <CrystalYouTubeDualStage
+            active={currentItem}
+            preload={youtubeQueue[0] ?? null}
+            onError={skipToNextYoutube}
+            onEnded={skipToNextYoutube}
+          />
         </div>
       )}
 
@@ -439,11 +756,12 @@ const Crystal = () => {
               {Math.round(happiness * 100)}%
             </span>
           </div>
-          <div className="h-2 w-full rounded-full bg-white/10 overflow-hidden mb-3">
+            <div className="h-2 w-full rounded-full bg-white/10 overflow-hidden mb-3">
             <div
-              className="h-full rounded-full transition-all duration-500"
+              className="h-full rounded-full ease-out"
               style={{
                 width: `${happiness * 100}%`,
+                transition: 'width 2.8s ease-out, background 2.8s ease-out',
                 background: happiness > 0.6 ? 'linear-gradient(90deg,#22c55e,#4ade80)' : happiness < 0.4 ? 'linear-gradient(90deg,#dc2626,#f87171)' : 'linear-gradient(90deg,#64748b,#94a3b8)',
               }}
             />
@@ -495,33 +813,124 @@ const Crystal = () => {
           className="fixed inset-0 z-[60] flex items-center justify-center p-6"
           style={{ background: 'rgba(0,0,0,0.85)' }}
         >
-          <div className="retro-panel p-6 max-w-sm text-center max-h-[80vh] overflow-y-auto" style={{ border: '1px solid rgba(0,255,245,0.3)' }}>
+          <div
+            className="retro-panel w-full max-w-md p-6 text-center max-h-[85vh] overflow-y-auto"
+            style={{ border: '1px solid rgba(0,255,245,0.3)' }}
+          >
             <p className="retro-title text-sm mb-2">{sessionItems.length > 0 ? 'Session saved' : 'Session ended'}</p>
             <p className="retro-body text-xs text-muted-foreground mb-4">
-              {sessionItems.length > 0 ? `${sessionItems.length} videos discovered` : 'No videos to save'}
+              {sessionItems.length > 0
+                ? `${sessionItems.length} video${sessionItems.length === 1 ? '' : 's'} — matching Spotify tracks…`
+                : 'No videos to save'}
             </p>
-            {sessionItems.length > 0 && (
-              <div className="space-y-2 text-left mb-4 max-h-48 overflow-y-auto">
-                {sessionItems.map((v, i) => (
-                  <a
-                    key={i}
-                    href={`https://www.youtube.com/watch?v=${v.videoId}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block retro-body text-xs text-accent truncate hover:underline"
+
+            {sessionItems.length > 0 && resolveLoading && (
+              <div className="flex flex-col items-center gap-3 py-6">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                <p className="retro-body text-xs text-muted-foreground">
+                  Finding Spotify songs for each YouTube title…
+                </p>
+              </div>
+            )}
+
+            {resolveError && (
+              <p className="retro-body text-xs text-red-400 mb-4 text-left">{resolveError}</p>
+            )}
+
+            {sessionItems.length > 0 && spotifyMatches && !resolveLoading && (
+              <div className="space-y-3 text-left mb-4 max-h-[min(40vh,280px)] overflow-y-auto pr-1">
+                {spotifyMatches.map((row, i) => (
+                  <div
+                    key={`${row.videoId}-${i}`}
+                    className="rounded-md border border-white/10 bg-white/[0.03] p-2.5 space-y-1"
                   >
-                    {i + 1}. {v.title}
-                  </a>
+                    <a
+                      href={`https://www.youtube.com/watch?v=${row.videoId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block retro-body text-[11px] text-blue-300/90 hover:underline line-clamp-2"
+                    >
+                      {i + 1}. {row.youtubeTitle}
+                    </a>
+                    {row.spotify ? (
+                      <a
+                        href={row.spotify.spotify_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block retro-body text-[11px] text-green-400/90 hover:underline"
+                      >
+                        Spotify: {row.spotify.name} — {row.spotify.artist}
+                      </a>
+                    ) : (
+                      <p className="retro-body text-[10px] text-muted-foreground">No close Spotify match</p>
+                    )}
+                  </div>
                 ))}
               </div>
             )}
+
+            {playlistError && (
+              <p className="retro-body text-xs text-red-400 mb-3 text-left">{playlistError}</p>
+            )}
+
+            {playlistResult && (
+              <div className="mb-4 rounded-md border border-green-500/30 bg-green-500/10 p-3 text-left">
+                <p className="retro-title text-[10px] text-green-400 mb-2">Playlist created</p>
+                {playlistResult.name && (
+                  <p className="retro-body text-xs text-foreground mb-2">{playlistResult.name}</p>
+                )}
+                <a
+                  href={playlistResult.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="retro-body text-xs text-green-300 underline"
+                >
+                  Open in Spotify
+                </a>
+              </div>
+            )}
+
+            {sessionItems.length > 0 &&
+              spotifyMatches &&
+              !resolveLoading &&
+              !playlistResult &&
+              spotifyMatches.some((m) => m.spotify) && (
+                <button
+                  type="button"
+                  onClick={handleCreateSpotifyPlaylist}
+                  disabled={playlistLoading}
+                  className="retro-title mb-4 w-full rounded-sm py-3 text-[11px] font-semibold transition-opacity disabled:opacity-50"
+                  style={{
+                    backgroundColor: 'hsla(var(--spotify-green) / 0.2)',
+                    color: 'hsl(var(--spotify-green))',
+                    border: '1px solid hsla(var(--spotify-green) / 0.35)',
+                  }}
+                >
+                  {playlistLoading ? (
+                    <span className="inline-flex items-center justify-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Creating playlist…
+                    </span>
+                  ) : (
+                    'Create Spotify playlist'
+                  )}
+                </button>
+              )}
+
+            {sessionItems.length > 0 &&
+              spotifyMatches &&
+              !resolveLoading &&
+              !spotifyMatches.some((m) => m.spotify) &&
+              !playlistResult && (
+                <p className="retro-body text-xs text-muted-foreground mb-4">
+                  No Spotify matches — try a session with clearer song titles, or add tracks manually in Spotify.
+                </p>
+              )}
+
             <button
-              onClick={() => {
-                setSessionItems([]);
-                setCurrentItem(null);
-                setSessionEnded(false);
-              }}
-              className="block w-full mt-4 retro-body text-xs text-muted-foreground hover:text-foreground"
+              type="button"
+              onClick={closeSessionModal}
+              className="block w-full mt-2 retro-body text-xs text-muted-foreground hover:text-foreground"
             >
               Close
             </button>

@@ -2,7 +2,13 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 const axios = require('axios');
-const { getTopTracksForCountry, createPlaylist, getTracksByMood, COUNTRY_GENRES } = require('./spotify');
+const {
+  getTopTracksForCountry,
+  createPlaylist,
+  getTracksByMood,
+  COUNTRY_GENRES,
+  resolveCrystalSessionVideosToSpotify,
+} = require('./spotify');
 const { parseUserIntent, generatePlaylistDetails, generateReply, analyzeVibe, generateYouTubeSearchQuery, generateCrystalSessionPlaylistDetails } = require('./agent');
 
 const app = express();
@@ -209,6 +215,26 @@ app.get('/api/debug-previews', async (req, res) => {
     res.json({ usSample: sample, total: us.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/crystal-youtube-to-spotify', async (req, res) => {
+  try {
+    const { videos } = req.body;
+    if (!Array.isArray(videos) || videos.length === 0) {
+      return res.status(400).json({ error: 'videos array required' });
+    }
+    const normalized = videos.slice(0, 40).map((v) => ({
+      videoId: String(v.videoId ?? ''),
+      title: String(v.title ?? ''),
+      channelTitle: String(v.channelTitle ?? ''),
+    }));
+    const matches = await resolveCrystalSessionVideosToSpotify(normalized);
+    res.json({ matches });
+  } catch (err) {
+    const detail = err.response?.data || err.message;
+    console.error('crystal-youtube-to-spotify:', detail);
+    res.status(500).json({ error: typeof detail === 'string' ? detail : JSON.stringify(detail) });
   }
 });
 
