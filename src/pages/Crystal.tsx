@@ -693,43 +693,53 @@ const Crystal = () => {
   }, []);
 
   const fetchYouTubeByHappiness = useCallback(async (h: number): Promise<YouTubeVideo[]> => {
-    try {
-      const res = await fetch(`${API_BASE}/api/youtube-by-happiness`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ happiness: h }),
-      });
-      if (!res.ok) return [];
-      const { videos } = await res.json();
-      return (videos || []).map((v: { videoId: string; title: string; channelTitle?: string }) => ({
-        source: 'youtube' as const,
-        videoId: v.videoId,
-        title: v.title,
-        channelTitle: v.channelTitle || '',
-      }));
-    } catch {
-      return [];
+    const res = await fetch(`${API_BASE}/api/youtube-by-happiness`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ happiness: h }),
+    });
+    const json = (await res.json().catch(() => ({}))) as {
+      videos?: { videoId: string; title: string; channelTitle?: string }[];
+      error?: string;
+    };
+    if (!res.ok) {
+      const msg =
+        typeof json.error === 'string'
+          ? json.error
+          : `Crystal request failed (${res.status}). The server uses YOUTUBE_API_KEY, _2, and _3 as fallbacks.`;
+      throw new Error(msg);
     }
+    return (json.videos || []).map((v) => ({
+      source: 'youtube' as const,
+      videoId: v.videoId,
+      title: v.title,
+      channelTitle: v.channelTitle || '',
+    }));
   }, []);
 
   const fetchYouTubeByScene = useCallback(async (scene: 'romantic' | 'gym'): Promise<YouTubeVideo[]> => {
-    try {
-      const res = await fetch(`${API_BASE}/api/youtube-crystal-scene`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scene }),
-      });
-      if (!res.ok) return [];
-      const { videos } = await res.json();
-      return (videos || []).map((v: { videoId: string; title: string; channelTitle?: string }) => ({
-        source: 'youtube' as const,
-        videoId: v.videoId,
-        title: v.title,
-        channelTitle: v.channelTitle || '',
-      }));
-    } catch {
-      return [];
+    const res = await fetch(`${API_BASE}/api/youtube-crystal-scene`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scene }),
+    });
+    const json = (await res.json().catch(() => ({}))) as {
+      videos?: { videoId: string; title: string; channelTitle?: string }[];
+      error?: string;
+    };
+    if (!res.ok) {
+      const msg =
+        typeof json.error === 'string'
+          ? json.error
+          : `Crystal request failed (${res.status}). The server uses YOUTUBE_API_KEY, _2, and _3 as fallbacks.`;
+      throw new Error(msg);
     }
+    return (json.videos || []).map((v) => ({
+      source: 'youtube' as const,
+      videoId: v.videoId,
+      title: v.title,
+      channelTitle: v.channelTitle || '',
+    }));
   }, []);
 
   const playMusicForHappiness = useCallback(
@@ -747,10 +757,12 @@ const Crystal = () => {
           setSessionItems((prev) => [...prev, first]);
           lastMusicRef.current = Date.now();
         } else {
-          setError('No music available. Add YOUTUBE_API_KEY to server/.env');
+          setError(
+            'No tracks returned. The API already tries YOUTUBE_API_KEY, YOUTUBE_API_KEY_2, and YOUTUBE_API_KEY_3 in order.',
+          );
         }
       } catch (e) {
-        setError('Could not fetch music.');
+        setError(e instanceof Error ? e.message : 'Could not fetch music.');
       } finally {
         setLoading(false);
       }
@@ -773,10 +785,12 @@ const Crystal = () => {
           setSessionItems((prev) => [...prev, first]);
           lastMusicRef.current = Date.now();
         } else {
-          setError('No music available. Add YOUTUBE_API_KEY to server/.env');
+          setError(
+            'No tracks returned. The API already tries YOUTUBE_API_KEY, YOUTUBE_API_KEY_2, and YOUTUBE_API_KEY_3 in order.',
+          );
         }
-      } catch {
-        setError('Could not fetch music.');
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Could not fetch music.');
       } finally {
         setLoading(false);
       }
@@ -1042,17 +1056,23 @@ const Crystal = () => {
     }
 
     const mode = playlistModeRef.current;
-    const videos =
-      mode === 'romantic' || mode === 'gym'
-        ? await fetchYouTubeByScene(mode)
-        : await fetchYouTubeByHappiness(smoothedHappinessRef.current);
-    if (videos.length > 0) {
-      const [first, ...rest] = videos;
-      setYoutubeQueue(rest);
-      setCurrentItem(first);
-      setSessionItems((prev) => [...prev, first]);
-    } else {
+    try {
+      const videos =
+        mode === 'romantic' || mode === 'gym'
+          ? await fetchYouTubeByScene(mode)
+          : await fetchYouTubeByHappiness(smoothedHappinessRef.current);
+      if (videos.length > 0) {
+        const [first, ...rest] = videos;
+        setYoutubeQueue(rest);
+        setCurrentItem(first);
+        setSessionItems((prev) => [...prev, first]);
+      } else {
+        setCurrentItem(null);
+        setError('No more tracks from YouTube. Try Play again or check API quota.');
+      }
+    } catch (e) {
       setCurrentItem(null);
+      setError(e instanceof Error ? e.message : 'Could not load the next track.');
     }
   }, [fetchYouTubeByHappiness, fetchYouTubeByScene]);
 

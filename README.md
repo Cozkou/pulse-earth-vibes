@@ -60,7 +60,7 @@ Without these, **search and playback still work**; **creating** playlists on you
 
 | Variable | Purpose |
 |----------|---------|
-| **`YOUTUBE_API_KEY_2`** | Second API key (e.g. another GCP project). Used automatically when the first key hits **quota** (`quotaExceeded`). |
+| **`YOUTUBE_API_KEY_2`**, **`YOUTUBE_API_KEY_3`** | Extra API keys (e.g. other GCP projects). Tried in order when a key hits **quota** (`quotaExceeded`) or returns 401/403. |
 | **`GLOBE_COUNTRY_CACHE_MS`** | How long to reuse `/api/country` results before calling YouTube again (ms). Default **86400000** (24h). Minimum enforced in code: 60s. |
 | **`PUBLIC_APP_URL`** | Base URL in Luffa link text (default in code: deployed app URL). No trailing slash. |
 | **`PORT`** | API port (default **`4000`**). |
@@ -87,7 +87,7 @@ Not required for globe, Crystal YouTube, Artist shuffle, or **YouTube** playlist
 
 ### Quota reminder
 
-- **YouTube Data API:** Each **`search.list`** costs **100** quota units; default daily quota is often **10,000**. A second key (**`YOUTUBE_API_KEY_2`**) and longer **`GLOBE_COUNTRY_CACHE_MS`** reduce pressure.
+- **YouTube Data API:** Each **`search.list`** costs **100** quota units; default daily quota is often **10,000**. Extra keys (**`YOUTUBE_API_KEY_2`**, **`YOUTUBE_API_KEY_3`**) and longer **`GLOBE_COUNTRY_CACHE_MS`** reduce pressure.
 - **Spotify:** Heavy use can return **HTTP 429**; the server includes backoff helpers.
 
 ### Quick reference table

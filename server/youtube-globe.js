@@ -1,4 +1,9 @@
-const { youtubeSearchWithFallback, getYoutubeApiKeys } = require('./youtube-search');
+const {
+  youtubeSearchWithFallback,
+  getYoutubeApiKeys,
+  formatYoutubeApiError,
+  isYoutubeQuotaExceededError,
+} = require('./youtube-search');
 const {
   isAllowedYoutubeMusicVideo,
   isInstrumentalOrLofi,
@@ -79,11 +84,44 @@ function rankedUniqueFromItems(mergeItems) {
 }
 
 /**
+ * @typedef {{ code: string, message: string }} GlobeVideosEmptyMeta
+ * @returns {{ tracks: object[], meta: GlobeVideosEmptyMeta | null }}
+ */
+function emptyGlobeResult(meta) {
+  return { tracks: [], meta };
+}
+
+function metaFromSearchError(err) {
+  if (!err) return { code: 'YOUTUBE_ERROR', message: 'YouTube search failed.' };
+  if (err.code === 'YOUTUBE_QUOTA_EXCEEDED' || isYoutubeQuotaExceededError(err)) {
+    return {
+      code: 'QUOTA_EXCEEDED',
+      message:
+        typeof err.message === 'string' && err.message.length > 20
+          ? err.message
+          : 'YouTube Data API quota exceeded on every key tried. Keys from the same Google Cloud project share one quota — use keys from different projects, or wait for reset / raise quota.',
+    };
+  }
+  const detail = formatYoutubeApiError(err);
+  return {
+    code: 'YOUTUBE_ERROR',
+    message: detail || 'YouTube Data API request failed. Check YOUTUBE_API_KEY and that YouTube Data API v3 is enabled.',
+  };
+}
+
+/**
  * Region-aware YouTube search → up to 10 videos shaped like the old `tracks` array
  * (`id` = videoId, `name` = title, `artist` = channel, `youtube_url`).
+ * On failure, `tracks` is empty and `meta` explains why (for /api/country error text).
  */
 async function getTopVideosForCountry(countryCode) {
-  if (getYoutubeApiKeys().length === 0) return [];
+  if (getYoutubeApiKeys().length === 0) {
+    return emptyGlobeResult({
+      code: 'NO_API_KEY',
+      message:
+        'YouTube search is not configured: set YOUTUBE_API_KEY in server/.env (Google Cloud → enable YouTube Data API v3 → create an API key). Restart the server after saving.',
+    });
+  }
 
   const code = countryCode.toUpperCase();
   const internal = COUNTRY_GENRES[code] || 'pop';
@@ -99,10 +137,12 @@ async function getTopVideosForCountry(countryCode) {
 
   /** @type {object[]} */
   const mergeItems = [];
+  let lastSearchError = null;
   try {
     const data = await youtubeSearchWithFallback(queries[0], GLOBE_FIRST_PAGE, region);
     if (data?.items?.length) mergeItems.push(...data.items);
   } catch (e) {
+    lastSearchError = e;
     console.warn('[YouTube globe] search failed:', queries[0].slice(0, 56), e.message);
   }
 
@@ -114,18 +154,40 @@ async function getTopVideosForCountry(countryCode) {
       const data = await youtubeSearchWithFallback(queries[1], GLOBE_FIRST_PAGE, region);
       if (data?.items?.length) mergeItems.push(...data.items);
     } catch (e) {
+      lastSearchError = e;
       console.warn('[YouTube globe] search failed:', queries[1].slice(0, 56), e.message);
     }
     unique = rankedUniqueFromItems(mergeItems);
   }
 
-  return unique.slice(0, 10).map((v) => ({
+  const tracks = unique.slice(0, 10).map((v) => ({
     id: v.id.videoId,
     name: v.snippet?.title || 'Video',
     artist: v.snippet?.channelTitle || '',
     preview_url: null,
     youtube_url: `https://www.youtube.com/watch?v=${v.id.videoId}`,
   }));
+
+  if (tracks.length > 0) {
+    return { tracks, meta: null };
+  }
+
+  if (mergeItems.length === 0) {
+    if (lastSearchError) {
+      return emptyGlobeResult(metaFromSearchError(lastSearchError));
+    }
+    return emptyGlobeResult({
+      code: 'EMPTY_YOUTUBE',
+      message:
+        'YouTube returned no items for this search. Check API key restrictions (HTTP referrers / IP) in Google Cloud.',
+    });
+  }
+
+  return emptyGlobeResult({
+    code: 'FILTERED_OUT',
+    message:
+      'YouTube returned results but none passed music filters (shorts / lyric reuploads / instrumentals). Try again later.',
+  });
 }
 
 module.exports = {

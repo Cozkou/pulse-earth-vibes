@@ -2,6 +2,8 @@ const path = require('path');
 const fs = require('fs/promises');
 const crypto = require('crypto');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
+// Fill missing vars from repo root `.env` (e.g. YOUTUBE_API_KEY_2/_3 often live next to Vite’s `.env`).
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const express = require('express');
 const axios = require('axios');
 const {
@@ -11,7 +13,11 @@ const {
   getSpotifyCooldownRemaining,
 } = require('./spotify');
 const { getTopVideosForCountry, COUNTRY_GENRES } = require('./youtube-globe');
-const { getYoutubeApiKeys, youtubeSearchWithFallback } = require('./youtube-search');
+const {
+  getYoutubeApiKeys,
+  youtubeSearchWithFallback,
+  isYoutubeQuotaExceededError,
+} = require('./youtube-search');
 const { isLyricVideo, isAllowedYoutubeMusicVideo, isInstrumentalOrLofi } = require('./youtube-filters');
 const { createYouTubePlaylist, isYouTubePlaylistConfigured } = require('./youtube-playlist');
 const { parseUserIntent, generatePlaylistDetails, generateReply, analyzeVibe, generateYouTubeSearchQuery, generateCrystalSessionPlaylistDetails, generateMoodSongReply, generateDigestMessage } = require('./agent');
@@ -55,16 +61,19 @@ const GENRE_MOOD = {
   'bollywood':  { energy: 0.75, danceability: 0.82, valence: 0.76 },
 };
 
-/** Fetches trending-style music videos per country (YouTube Search + region bias). */
+/**
+ * Fetches trending-style music videos per country (YouTube Search + region bias).
+ * @returns {Promise<{ ok: true } | { ok: false, meta: { code: string, message: string } }>}
+ */
 async function refreshCountryData(countryCode) {
   try {
     const code = countryCode.toUpperCase();
-    if (getYoutubeApiKeys().length === 0) {
-      console.warn('refreshCountryData: set YOUTUBE_API_KEY in server/.env');
-      return;
+    const { tracks, meta } = await getTopVideosForCountry(code);
+    if (!tracks || tracks.length === 0) {
+      if (meta) console.warn('refreshCountryData: no tracks for', code, meta.code, meta.message.slice(0, 120));
+      else console.warn('refreshCountryData: no tracks for', code);
+      return { ok: false, meta: meta || { code: 'UNKNOWN', message: 'No videos available for this country.' } };
     }
-    const tracks = await getTopVideosForCountry(code);
-    if (!tracks || tracks.length === 0) return;
 
     const genre = COUNTRY_GENRES[code] || 'pop';
     const mood = GENRE_MOOD[genre] || GENRE_MOOD['pop'];
@@ -81,8 +90,13 @@ async function refreshCountryData(countryCode) {
     };
 
     console.log(`Updated data for ${countryName}`);
+    return { ok: true };
   } catch (err) {
     console.error(`Failed to update ${countryCode}:`, err.message);
+    return {
+      ok: false,
+      meta: { code: 'EXCEPTION', message: err.message || 'Unexpected error refreshing country data.' },
+    };
   }
 }
 
@@ -125,23 +139,51 @@ app.get('/api/country/:code', async (req, res) => {
   const isFresh = cached && (Date.now() - new Date(cached.updatedAt).getTime() < GLOBE_COUNTRY_CACHE_MS);
 
   let servedStale = false;
+  /** @type {{ ok: false, meta: { code: string, message: string } } | { ok: true } | null} */
+  let refreshOutcome = null;
   if (!isFresh) {
     try {
-      await Promise.race([
+      refreshOutcome = await Promise.race([
         refreshCountryData(code),
         new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 45000)),
       ]);
     } catch (err) {
       console.warn('refreshCountryData timed out or failed for', code, err.message);
       if (globeData[code]) servedStale = true;
+      if (err && String(err.message) === 'timeout') {
+        refreshOutcome = {
+          ok: false,
+          meta: {
+            code: 'TIMEOUT',
+            message:
+              'YouTube refresh timed out. Check network, API latency, and that the server can reach googleapis.com.',
+          },
+        };
+      }
     }
   }
 
   const data = globeData[code];
   if (!data) {
-    return res.status(404).json({
-      error:
-        'No videos for this country yet — set YOUTUBE_API_KEY in server/.env, or try again in a moment.',
+    const meta =
+      refreshOutcome && typeof refreshOutcome === 'object' && refreshOutcome.ok === false
+        ? refreshOutcome.meta
+        : null;
+    const fallback = {
+      code: 'NO_DATA',
+      message:
+        'No videos for this country yet. Set YOUTUBE_API_KEY in server/.env, restart the API, then try again.',
+    };
+    const payload = meta || fallback;
+    const status =
+      payload.code === 'NO_API_KEY' || payload.code === 'QUOTA_EXCEEDED'
+        ? 503
+        : payload.code === 'TIMEOUT'
+          ? 504
+          : 404;
+    return res.status(status).json({
+      error: payload.message,
+      code: payload.code,
     });
   }
   if (servedStale) res.setHeader('X-Country-Data-Stale', '1');
@@ -259,42 +301,94 @@ const CRYSTAL_GYM_QUERIES = [
 ];
 
 /**
- * One YouTube search per call (100 quota units). Shared by mood + scene Crystal endpoints.
- * @param {string[]} pool
+ * Dedupe + filter Crystal candidates into up to 5 videos.
+ * Tries strict filters first, then relaxed (instrumental heuristic skipped), then any unique video IDs
+ * so Play still works when heuristics are over-aggressive.
+ * @param {object[]} allItems raw search items
  */
-async function pickVideosForCrystalQueryPool(pool) {
-  const picked = [...pool].sort(() => Math.random() - 0.5).slice(0, 1);
-  const allItems = [];
-  for (const query of picked) {
-    try {
-      const data = await youtubeSearchWithFallback(query, 50);
-      if (data?.items) allItems.push(...data.items);
-    } catch {
-      /* skip failed query */
-    }
-  }
+function crystalVideosFromItems(allItems) {
+  if (!Array.isArray(allItems) || allItems.length === 0) return [];
 
-  const candidates = allItems
-    .filter(isAllowedYoutubeMusicVideo)
-    .filter((v) => !isInstrumentalOrLofi(v));
+  const withId = allItems.filter((v) => v?.id?.videoId);
+
+  const toRows = (chosen) =>
+    chosen.map((v) => ({
+      videoId: v.id.videoId,
+      title: v.snippet?.title || 'Music',
+      channelTitle: v.snippet?.channelTitle || '',
+    }));
+
+  const pickUniqueSlice = (candidates) => {
+    const seen = new Set();
+    const unique = [];
+    for (const v of candidates) {
+      if (!seen.has(v.id.videoId)) {
+        seen.add(v.id.videoId);
+        unique.push(v);
+      }
+    }
+    const lyricItems = unique.filter(isLyricVideo);
+    const chosen = (lyricItems.length >= 3 ? lyricItems : unique).slice(0, 5);
+    return toRows(chosen);
+  };
+
+  let candidates = withId.filter(isAllowedYoutubeMusicVideo).filter((v) => !isInstrumentalOrLofi(v));
+  let out = pickUniqueSlice(candidates);
+  if (out.length > 0) return out;
+
+  candidates = withId.filter(isAllowedYoutubeMusicVideo);
+  out = pickUniqueSlice(candidates);
+  if (out.length > 0) return out;
 
   const seen = new Set();
-  const unique = [];
-  for (const v of candidates) {
-    if (!seen.has(v.id.videoId)) {
-      seen.add(v.id.videoId);
-      unique.push(v);
+  const emergency = [];
+  for (const v of withId) {
+    const id = v.id.videoId;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    emergency.push(v);
+    if (emergency.length >= 5) break;
+  }
+  return toRows(emergency);
+}
+
+/**
+ * YouTube search for Crystal (100 quota units per successful search; all keys tried per search).
+ * Runs several random queries from the pool until we have picks or hit quota — reduces “no video” flakes.
+ * @param {string[]} pool
+ * @returns {Promise<{ videos: object[], quotaExhausted: boolean }>}
+ */
+async function pickVideosForCrystalQueryPool(pool) {
+  const shuffled = [...pool].sort(() => Math.random() - 0.5);
+  const maxAttempts = Math.min(5, shuffled.length);
+  let allItems = [];
+  let quotaExhausted = false;
+
+  const runOneSearch = async (query) => {
+    if (!query) return;
+    try {
+      // Music-only (category 10) sometimes returns zero items; broaden search once if so.
+      let data = await youtubeSearchWithFallback(query, 50);
+      if (!data?.items?.length) {
+        data = await youtubeSearchWithFallback(query, 50, null, { videoCategoryId: null });
+      }
+      if (data?.items?.length) allItems.push(...data.items);
+    } catch (e) {
+      if (e?.code === 'YOUTUBE_QUOTA_EXCEEDED' || isYoutubeQuotaExceededError(e?.cause)) {
+        quotaExhausted = true;
+      }
+      console.warn('[Crystal] YouTube search failed:', String(query).slice(0, 52), e.message);
     }
+  };
+
+  for (let i = 0; i < maxAttempts; i++) {
+    await runOneSearch(shuffled[i]);
+    const videos = crystalVideosFromItems(allItems);
+    if (videos.length > 0) return { videos, quotaExhausted: false };
+    if (quotaExhausted) return { videos: [], quotaExhausted: true };
   }
 
-  const lyricItems = unique.filter(isLyricVideo);
-  const chosen = (lyricItems.length >= 3 ? lyricItems : unique).slice(0, 5);
-
-  return chosen.map((v) => ({
-    videoId: v.id.videoId,
-    title: v.snippet?.title || 'Music',
-    channelTitle: v.snippet?.channelTitle || '',
-  }));
+  return { videos: crystalVideosFromItems(allItems), quotaExhausted };
 }
 
 app.post('/api/youtube-by-happiness', async (req, res) => {
@@ -304,9 +398,20 @@ app.post('/api/youtube-by-happiness', async (req, res) => {
     const h = Math.max(0, Math.min(1, parseFloat(req.body.happiness) || 0.5));
     const pool = h > 0.6 ? HAPPY_QUERIES : h < 0.4 ? SAD_QUERIES : NEUTRAL_QUERIES;
 
-    const videos = await pickVideosForCrystalQueryPool(pool);
+    const { videos, quotaExhausted } = await pickVideosForCrystalQueryPool(pool);
     if (videos.length === 0) {
-      return res.status(404).json({ error: 'No video found' });
+      if (quotaExhausted) {
+        return res.status(503).json({
+          error:
+            'YouTube quota is used up on every distinct key we tried. API keys from the same Google Cloud project share one daily quota — set YOUTUBE_API_KEY_2 / _3 from other projects, or wait for reset.',
+          code: 'QUOTA_EXCEEDED',
+        });
+      }
+      return res.status(404).json({
+        error:
+          'No video found for Crystal right now (no search results or all keys exhausted). Check server logs, YouTube API quota, and that the API server can reach googleapis.com.',
+        code: 'NO_VIDEO',
+      });
     }
     console.log(`[Crystal] happiness=${h.toFixed(2)} → ${videos.map((v) => v.title).join(' | ')}`);
     res.json({ videos });
@@ -326,9 +431,20 @@ app.post('/api/youtube-crystal-scene', async (req, res) => {
     }
 
     const pool = scene === 'romantic' ? CRYSTAL_ROMANTIC_QUERIES : CRYSTAL_GYM_QUERIES;
-    const videos = await pickVideosForCrystalQueryPool(pool);
+    const { videos, quotaExhausted } = await pickVideosForCrystalQueryPool(pool);
     if (videos.length === 0) {
-      return res.status(404).json({ error: 'No video found' });
+      if (quotaExhausted) {
+        return res.status(503).json({
+          error:
+            'YouTube quota is used up on every distinct key we tried. API keys from the same Google Cloud project share one daily quota — set YOUTUBE_API_KEY_2 / _3 from other projects, or wait for reset.',
+          code: 'QUOTA_EXCEEDED',
+        });
+      }
+      return res.status(404).json({
+        error:
+          'No video found for Crystal right now (no search results or all keys exhausted). Check server logs, YouTube API quota, and that the API server can reach googleapis.com.',
+        code: 'NO_VIDEO',
+      });
     }
     console.log(`[Crystal] scene=${scene} → ${videos.map((v) => v.title).join(' | ')}`);
     res.json({ videos });
@@ -455,13 +571,13 @@ app.get('/api/debug-previews', async (req, res) => {
     if (getYoutubeApiKeys().length === 0) {
       return res.status(503).json({ error: 'YOUTUBE_API_KEY not set' });
     }
-    const us = await getTopVideosForCountry('US');
+    const { tracks: us, meta } = await getTopVideosForCountry('US');
     const sample = us.slice(0, 5).map((t) => ({
       name: t.name,
       artist: t.artist,
       youtube_url: t.youtube_url,
     }));
-    res.json({ usSample: sample, total: us.length });
+    res.json({ usSample: sample, total: us.length, emptyMeta: meta });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -679,9 +795,17 @@ app.post('/api/create-playlist', async (req, res) => {
   try {
     const { countryCode } = req.body;
     const code = countryCode?.toUpperCase();
-    if (!globeData[code]) await refreshCountryData(code);
+    let refreshResult = null;
+    if (!globeData[code]) refreshResult = await refreshCountryData(code);
     const countryData = globeData[code];
-    if (!countryData) return res.status(404).json({ error: 'No data for this country' });
+    if (!countryData) {
+      const meta = refreshResult && !refreshResult.ok ? refreshResult.meta : null;
+      const status = meta?.code === 'NO_API_KEY' || meta?.code === 'QUOTA_EXCEEDED' ? 503 : 404;
+      return res.status(status).json({
+        error: meta?.message || 'No data for this country. Open the country on the globe first or check YOUTUBE_API_KEY.',
+        code: meta?.code || 'NO_DATA',
+      });
+    }
 
     const details = await generatePlaylistDetails(countryData.country, countryData.tracks);
     const videoIds = countryData.tracks.map((t) => t.id).filter(Boolean);
@@ -1566,7 +1690,13 @@ function startLuffaPoller() {
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
+  const n = getYoutubeApiKeys().length;
   console.log(`Server running on port ${PORT}`);
+  if (n > 0) {
+    console.log(
+      `[YouTube Data API] ${n} distinct search key(s) — each request tries them in order until one succeeds (globe, Crystal, artist shuffle, vibe). Same key in multiple slots is deduped.`,
+    );
+  }
   startLuffaPoller();
   startLuffaScheduledFeatures();
 });
